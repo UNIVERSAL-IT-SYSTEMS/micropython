@@ -32,6 +32,9 @@ CFLAGS += -I$(STMUSBH_DIR)
 CFLAGS += -I$(FATFS_DIR)
 #CFLAGS += -I$(CC3K_DIR)
 
+BOARD ?= PYBOARD4
+CFLAGS += -Iboards/$(BOARD)
+
 #Debugging/Optimization
 DEBUG?=1
 ifeq ($(DEBUG), 1)
@@ -79,20 +82,9 @@ SRC_C = \
 	adc.c \
 	rtc.c \
 	file.c
-    
-#	main.c \
-#    freeRTOS/hooks.c \
-#    freeRTOS/tasks.c \
-#    freeRTOS/timers.c \
-#    freeRTOS/list.c \
-#    freeRTOS/queue.c \
-#    freeRTOS/port.c \
-#    freeRTOS/heap_2.c \
-#    picotcp-support/pico_bsd_sockets.c \
-#    picotcp-support/pico_f4x7_eth.c \
-#    picotcp-support/pico_osal.c \
-#    stm32f4x_eth/stm32f4x7_eth.c \
-#    stm32f4x_eth/stm32f4x7_eth_bsp.c \
+	pin.c \
+	pin_named_pins.c \
+	pin_map.c \
 #	pybwlan.c \
 
 SRC_S = \
@@ -180,9 +172,9 @@ OBJ += $(addprefix $(BUILD)/, $(SRC_STMUSBD:.c=.o))
 #OBJ += $(addprefix $(BUILD)/, $(SRC_STMUSBH:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_FATFS:.c=.o))
 #OBJ += $(addprefix $(BUILD)/, $(SRC_CC3K:.c=.o))
+OBJ += $(BUILD)/pins_$(BOARD).o
 
 all: $(BUILD)/libmicropy.a
-#all: $(BUILD)/flash.dfu
 
 
 $(BUILD)/libmicropy.a: $(OBJ) 
@@ -205,5 +197,17 @@ $(BUILD)/flash.elf: $(OBJ)
 	$(ECHO) "LINK $@"
 	$(Q)$(LD) $(LDFLAGS) -o $@ $(OBJ) $(LIBS)
 	$(Q)$(SIZE) $@
+
+MAKE_PINS = boards/make-pins.py
+BOARD_PINS = boards/$(BOARD)/pins.csv
+AF_FILE = boards/stm32f4xx-af.csv
+PREFIX_FILE = boards/stm32f4xx-prefix.c
+
+$(BUILD)/pins_$(BOARD).c: $(MAKE_PINS) $(BOARD_PINS) $(AF_FILE) $(PREFIX_FILE)
+	$(ECHO) "Create $@"
+	$(Q)python $(MAKE_PINS) --board $(BOARD_PINS) --af $(AF_FILE) --prefix $(PREFIX_FILE) > $@
+
+$(BUILD)/pins_$(BOARD).o: $(BUILD)/pins_$(BOARD).c
+	$(call compile_c)
 
 include ../py/mkrules.mk

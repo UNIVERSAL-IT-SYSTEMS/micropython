@@ -50,6 +50,7 @@
 #include "adc.h"
 #include "rtc.h"
 #include "file.h"
+#include "pin.h"
 
 int errno;
 
@@ -430,7 +431,8 @@ soft_reset:
 #endif
         rt_store_attr(m, MP_QSTR_hid, rt_make_function_n(1, pyb_hid_send_report));
 #if MICROPY_HW_ENABLE_RTC
-        rt_store_attr(m, MP_QSTR_time, rt_make_function_n(0, pyb_rtc_read));
+        rt_store_attr(m, MP_QSTR_time, (mp_obj_t)&pyb_rtc_read_obj);
+        rt_store_attr(m, qstr_from_str("rtc_info"), (mp_obj_t)&pyb_rtc_info_obj);
 #endif
 #if MICROPY_HW_ENABLE_RNG
         rt_store_attr(m, MP_QSTR_rand, rt_make_function_n(0, pyb_rng_get));
@@ -445,6 +447,7 @@ soft_reset:
         rt_store_attr(m, MP_QSTR_ADC, (mp_obj_t)&pyb_ADC_obj);
         rt_store_attr(m, qstr_from_str("millis"), rt_make_function_n(0, pyb_millis));
 
+        pin_map_init(m);
         gpio_init(m);
 
         rt_store_name(MP_QSTR_pyb, m);

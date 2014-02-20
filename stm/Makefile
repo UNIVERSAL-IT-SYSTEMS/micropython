@@ -32,7 +32,7 @@ CFLAGS += -I$(STMUSBH_DIR)
 CFLAGS += -I$(FATFS_DIR)
 #CFLAGS += -I$(CC3K_DIR)
 
-BOARD ?= PYBOARD4
+BOARD ?= STM32F4DISC
 CFLAGS += -Iboards/$(BOARD)
 
 #Debugging/Optimization
@@ -81,7 +81,7 @@ SRC_C = \
 	usrsw.c \
 	adc.c \
 	rtc.c \
-	file.c
+	file.c \
 	pin.c \
 	pin_named_pins.c \
 	pin_map.c \

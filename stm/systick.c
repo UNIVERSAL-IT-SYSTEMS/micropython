@@ -12,7 +12,7 @@ void sys_tick_init(void) {
 }
 
 // called on SysTick interrupt
-void SysTick_Handler(void) {
+void micropy_SysTick_Handler(void) {
     sys_tick_counter++;
     // hack!
     //void audio_drain(void);
@@ -27,6 +27,7 @@ void sys_tick_delay_ms(uint32_t delay_ms) {
 // handles overflow properl
 // assumes stc was taken from sys_tick_counter some time before calling this function
 // eg stc <= sys_tick_counter for the case of no wrap around of sys_tick_counter
+/*
 void sys_tick_wait_at_least(uint32_t stc, uint32_t delay_ms) {
     // stc_wait is the value of sys_tick_counter that we wait for
     uint32_t stc_wait = stc + delay_ms;
@@ -40,6 +41,20 @@ void sys_tick_wait_at_least(uint32_t stc, uint32_t delay_ms) {
         while (stc <= sys_tick_counter && sys_tick_counter < stc_wait) {
             __WFI(); // enter sleep mode, waiting for interrupt
         }
+    }
+}
+*/
+
+// Alternative implementation that does not wait for interrupt (easier to debug)
+void sys_tick_wait_at_least(uint32_t stc, uint32_t delay_ms) {
+    // stc_wait is the value of sys_tick_counter that we wait for
+    uint32_t stc_wait = stc + delay_ms;
+    if (stc_wait < stc) {
+        // stc_wait wrapped around
+        while (stc <= sys_tick_counter || sys_tick_counter < stc_wait) {}
+    } else {
+        // stc_wait did not wrap around
+        while (stc <= sys_tick_counter && sys_tick_counter < stc_wait) {}
     }
 }
 

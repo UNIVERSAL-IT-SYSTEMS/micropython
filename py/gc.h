@@ -3,10 +3,10 @@ void gc_collect_start(void);
 void gc_collect_root(void **ptrs, machine_uint_t len);
 void gc_collect_end(void);
 void gc_collect(void);
-void *gc_alloc(machine_uint_t n_bytes);
+void *gc_alloc(size_t n_bytes);
 void gc_free(void *ptr);
 machine_uint_t gc_nbytes(void *ptr);
-void *gc_realloc(void *ptr, machine_uint_t n_bytes);
+void *gc_realloc(void *ptr, size_t n_bytes);
 
 typedef struct _gc_info_t {
     machine_uint_t total;

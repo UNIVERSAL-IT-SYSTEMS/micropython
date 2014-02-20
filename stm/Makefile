@@ -13,18 +13,27 @@ STMUSBD_DIR=stmusbd
 STMUSBH_DIR=stmusbh
 FATFS_DIR=fatfs
 CC3K_DIR=cc3k
+#FREERTOS_DIR=freeRTOS
+#PICOTCP_LIB=picotcp/build/lib
+#PICOTCP_INC=picotcp/build/include
+#PICOTCP_SUPPORT_DIR=picotcp-support
+#STM_ETH_DIR=stm32f4x_eth
 DFU=../tools/dfu.py
 
 CROSS_COMPILE = arm-none-eabi-
 
-CFLAGS_CORTEX_M4 = -mthumb -mtune=cortex-m4 -mabi=aapcs-linux -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -fsingle-precision-constant -Wdouble-promotion
-CFLAGS = -I. -I$(PY_SRC) -I$(CMSIS_DIR) -I$(STMPERIPH_DIR) -I$(STMUSB_DIR) -Wall -Werror -ansi -std=gnu99 $(CFLAGS_CORTEX_M4) $(COPT)
+CFLAGS_CORTEX_M4 = -mthumb -mtune=cortex-m4 -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -fsingle-precision-constant -Wdouble-promotion
+CFLAGS = -I. -I$(PY_SRC) -I$(CMSIS_DIR) -I$(STMPERIPH_DIR) -I$(STMUSB_DIR)  -Wall -ansi -std=gnu99 $(CFLAGS_CORTEX_M4) $(COPT)
+#-I$(STM_ETH_DIR) -I$(FREERTOS_DIR) -I$(PICOTCP_SUPPORT_DIR) -I$(PICOTCP_INC)
+
+# -Werror
 CFLAGS += -I$(STMUSBD_DIR)
 CFLAGS += -I$(STMUSBH_DIR)
 CFLAGS += -I$(FATFS_DIR)
 #CFLAGS += -I$(CC3K_DIR)
 
 #Debugging/Optimization
+DEBUG?=1
 ifeq ($(DEBUG), 1)
 CFLAGS += -g
 COPT = -O0
@@ -32,14 +41,16 @@ else
 COPT += -Os -DNDEBUG
 endif
 
-LDFLAGS = --nostdlib -T stm32f405.ld -Map=$(@:.elf=.map) --cref
-LIBS =
+#LDFLAGS = --nostdlib -T stm32f407.ld -Map=$(@:.elf=.map) --cref -L$(PICOTCP_LIB)
+LDFLAGS =  -T stm32f407.ld -Map=$(@:.elf=.map) --cref
+#-L$(PICOTCP_LIB)
+#LIBS = -lpicotcp 
+LIBS =  
 
 # uncomment this if you want libgcc
 #LIBS += $(shell $(CC) -print-libgcc-file-name)
 
 SRC_C = \
-	main.c \
 	printf.c \
 	system_stm32f4xx.c \
 	stm32fxxx_it.c \
@@ -67,7 +78,21 @@ SRC_C = \
 	usrsw.c \
 	adc.c \
 	rtc.c \
-	file.c \
+	file.c
+    
+#	main.c \
+#    freeRTOS/hooks.c \
+#    freeRTOS/tasks.c \
+#    freeRTOS/timers.c \
+#    freeRTOS/list.c \
+#    freeRTOS/queue.c \
+#    freeRTOS/port.c \
+#    freeRTOS/heap_2.c \
+#    picotcp-support/pico_bsd_sockets.c \
+#    picotcp-support/pico_f4x7_eth.c \
+#    picotcp-support/pico_osal.c \
+#    stm32f4x_eth/stm32f4x7_eth.c \
+#    stm32f4x_eth/stm32f4x7_eth_bsp.c \
 #	pybwlan.c \
 
 SRC_S = \
@@ -156,7 +181,15 @@ OBJ += $(addprefix $(BUILD)/, $(SRC_STMUSBD:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_FATFS:.c=.o))
 #OBJ += $(addprefix $(BUILD)/, $(SRC_CC3K:.c=.o))
 
-all: $(BUILD)/flash.dfu
+all: $(BUILD)/libmicropy.a
+#all: $(BUILD)/flash.dfu
+
+
+$(BUILD)/libmicropy.a: $(OBJ) 
+	$(ECHO) "LINK $@"
+	$(Q)$(AR) cru $@ $< $(OBJ) $(LIBS)
+	$(Q)$(RANLIB) $@ 
+	$(Q)$(SIZE) -t $@
 
 $(BUILD)/flash.dfu: $(BUILD)/flash0.bin $(BUILD)/flash1.bin
 	$(ECHO) "Create $@"

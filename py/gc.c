@@ -238,7 +238,7 @@ void gc_info(gc_info_t *info) {
     info->free *= BYTES_PER_BLOCK;
 }
 
-void *gc_alloc(machine_uint_t n_bytes) {
+void *gc_alloc(size_t n_bytes) {
     machine_uint_t n_blocks = ((n_bytes + BYTES_PER_BLOCK - 1) & (~(BYTES_PER_BLOCK - 1))) / BYTES_PER_BLOCK;
     DEBUG_printf("gc_alloc(%u bytes -> %u blocks)\n", n_bytes, n_blocks);
 
@@ -326,7 +326,7 @@ machine_uint_t gc_nbytes(void *ptr_in) {
     return 0;
 }
 
-void *gc_realloc(void *ptr, machine_uint_t n_bytes) {
+void *gc_realloc(void *ptr, size_t n_bytes) {
     machine_uint_t n_existing = gc_nbytes(ptr);
     if (n_bytes <= n_existing) {
         return ptr;

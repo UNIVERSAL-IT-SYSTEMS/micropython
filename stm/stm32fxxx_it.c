@@ -131,9 +131,11 @@ void UsageFault_Handler(void)
   * @param  None
   * @retval None
   */
+/* REPLACED BY FreeRTOS'
 void SVC_Handler(void)
 {
 }
+*/
 
 /**
   * @brief  This function handles Debug Monitor exception.
@@ -149,11 +151,13 @@ void DebugMon_Handler(void)
   * @param  None
   * @retval None
   */
+/* REPLACED BY FreeRTOS'
 void PendSV_Handler(void)
 {
     extern void pendsv_isr_handler(void);
     pendsv_isr_handler();
 }
+*/
 
 /**
   * @brief  This function handles EXTI15_10_IRQ Handler.

@@ -36,8 +36,8 @@ machine_float_t machine_sqrt(machine_float_t x);
 
 // choose 1 of these boards
 //#define PYBOARD3
-#define PYBOARD4
-//#define STM32F4DISC
+//#define PYBOARD4
+#define STM32F4DISC
 //#define NETDUINO_PLUS_2
 
 #if defined (PYBOARD3)

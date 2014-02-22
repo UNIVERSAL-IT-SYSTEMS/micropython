@@ -174,10 +174,10 @@ OBJ += $(addprefix $(BUILD)/, $(SRC_FATFS:.c=.o))
 #OBJ += $(addprefix $(BUILD)/, $(SRC_CC3K:.c=.o))
 OBJ += $(BUILD)/pins_$(BOARD).o
 
-all: $(BUILD)/lib/libmicropy.a
+all: $(BUILD)/lib/libmicropython.a
 
 
-$(BUILD)/lib/libmicropy.a: $(OBJ) 
+$(BUILD)/lib/libmicropython.a: $(OBJ)
 	$(ECHO) "LINK $@"
 	@mkdir -p $(dir $@)
 	$(Q)$(AR) cru $@ $< $(OBJ) $(LIBS)

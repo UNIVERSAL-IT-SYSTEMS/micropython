@@ -55,8 +55,6 @@ LIBS =
 
 SRC_C = \
 	printf.c \
-	system_stm32f4xx.c \
-	stm32fxxx_it.c \
 	string0.c \
 	malloc0.c \
 	systick.c  \
@@ -86,10 +84,12 @@ SRC_C = \
 	pin_named_pins.c \
 	pin_map.c \
 #	pybwlan.c \
+#	system_stm32f4xx.c \
+#	stm32fxxx_it.c \
 
 SRC_S = \
-	startup_stm32f40xx.s \
 	gchelper.s \
+	#startup_stm32f40xx.s \
 
 SRC_STMPERIPH = $(addprefix $(STMPERIPH_DIR)/,\
 	stm_misc.c \
@@ -177,7 +177,7 @@ OBJ += $(BUILD)/pins_$(BOARD).o
 all: $(BUILD)/lib/libmicropython.a
 
 
-$(BUILD)/lib/libmicropython.a: $(OBJ)
+$(BUILD)/lib/libmicropython.a: $(OBJ) 
 	$(ECHO) "LINK $@"
 	@mkdir -p $(dir $@)
 	$(Q)$(AR) cru $@ $< $(OBJ) $(LIBS)

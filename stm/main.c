@@ -51,6 +51,7 @@
 #include "rtc.h"
 #include "file.h"
 #include "pin.h"
+#include "socket.h"
 
 int errno;
 

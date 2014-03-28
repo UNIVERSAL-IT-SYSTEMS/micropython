@@ -1,5 +1,3 @@
-#include <unistd.h>
-#include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -13,6 +11,7 @@
 #include "scope.h"
 #include "runtime0.h"
 #include "emit.h"
+#include "emitglue.h"
 #include "asmthumb.h"
 
 #if MICROPY_EMIT_INLINE_THUMB
@@ -53,7 +52,7 @@ STATIC void emit_inline_thumb_end_pass(emit_inline_asm_t *emit) {
 
     if (emit->pass == PASS_3) {
         void *f = asm_thumb_get_code(emit->as);
-        rt_assign_inline_asm_code(emit->scope->unique_code_id, f, asm_thumb_get_code_size(emit->as), emit->scope->num_params);
+        mp_emit_glue_assign_inline_asm_code(emit->scope->unique_code_id, f, asm_thumb_get_code_size(emit->as), emit->scope->num_params);
     }
 }
 
@@ -110,7 +109,7 @@ STATIC int get_arg_i(qstr op, mp_parse_node_t *pn_args, int wanted_arg_num, int 
         printf("SyntaxError: '%s' expects an integer in position %d\n", qstr_str(op), wanted_arg_num);
         return 0;
     }
-    int i = MP_PARSE_NODE_LEAF_ARG(pn_args[wanted_arg_num]);
+    int i = MP_PARSE_NODE_LEAF_SMALL_INT(pn_args[wanted_arg_num]);
     if ((i & (~fit_mask)) != 0) {
         printf("SyntaxError: '%s' integer 0x%x does not fit in mask 0x%x\n", qstr_str(op), i, fit_mask);
         return 0;

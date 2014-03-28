@@ -1,3 +1,6 @@
+void rt_init(void);
+void rt_deinit(void);
+
 void rt_check_nargs(int n_args, machine_uint_t n_args_min, machine_uint_t n_args_max, int n_kw, bool is_kw);
 
 int rt_is_true(mp_obj_t arg);
@@ -12,13 +15,14 @@ mp_obj_t rt_get_cell(mp_obj_t cell);
 void rt_set_cell(mp_obj_t cell, mp_obj_t val);
 void rt_store_name(qstr qstr, mp_obj_t obj);
 void rt_store_global(qstr qstr, mp_obj_t obj);
+void rt_delete_name(qstr qstr);
 mp_obj_t rt_unary_op(int op, mp_obj_t arg);
 mp_obj_t rt_binary_op(int op, mp_obj_t lhs, mp_obj_t rhs);
 mp_obj_t rt_make_function_from_id(int unique_code_id, mp_obj_t def_args);
 mp_obj_t rt_make_function_n(int n_args, void *fun); // fun must have the correct signature for n_args fixed arguments
 mp_obj_t rt_make_function_var(int n_args_min, mp_fun_var_t fun);
 mp_obj_t rt_make_function_var_between(int n_args_min, int n_args_max, mp_fun_var_t fun); // min and max are inclusive
-mp_obj_t rt_make_closure_from_id(int unique_code_id, mp_obj_t closure_tuple);
+mp_obj_t rt_make_closure_from_id(int unique_code_id, mp_obj_t closure_tuple, mp_obj_t def_args);
 mp_obj_t rt_call_function_0(mp_obj_t fun);
 mp_obj_t rt_call_function_1(mp_obj_t fun, mp_obj_t arg);
 mp_obj_t rt_call_function_2(mp_obj_t fun, mp_obj_t arg1, mp_obj_t arg2);
@@ -38,7 +42,8 @@ void rt_load_method(mp_obj_t base, qstr attr, mp_obj_t *dest);
 void rt_store_attr(mp_obj_t base, qstr attr, mp_obj_t val);
 void rt_store_subscr(mp_obj_t base, mp_obj_t index, mp_obj_t val);
 mp_obj_t rt_getiter(mp_obj_t o);
-mp_obj_t rt_iternext(mp_obj_t o);
+mp_obj_t rt_iternext_allow_raise(mp_obj_t o); // may return MP_OBJ_NULL instead of raising StopIteration()
+mp_obj_t rt_iternext(mp_obj_t o); // will always return MP_OBJ_NULL instead of raising StopIteration(...)
 mp_obj_t rt_make_raise_obj(mp_obj_t o);
 mp_obj_t rt_import_name(qstr name, mp_obj_t fromlist, mp_obj_t level);
 mp_obj_t rt_import_from(mp_obj_t module, qstr name);

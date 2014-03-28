@@ -1,7 +1,4 @@
-#include <stdint.h>
-#include <stdlib.h>
 #include <stdio.h>
-#include <string.h>
 #include <assert.h>
 
 #include "nlr.h"
@@ -19,16 +16,6 @@
 // function arguments). Stack pointer is pre-incremented and points at the
 // top element.
 // Exception stack also grows up, top element is also pointed at.
-
-// Exception stack entry
-typedef struct _mp_exc_stack {
-    const byte *handler;
-    // bit 0 is saved currently_in_except_block value
-    machine_uint_t val_sp;
-    // We might only have 2 interesting cases here: SETUP_EXCEPT & SETUP_FINALLY,
-    // consider storing it in bit 1 of val_sp. TODO: SETUP_WITH?
-    byte opcode;
-} mp_exc_stack;
 
 // Exception stack unwind reasons (WHY_* in CPython-speak)
 // TODO perhaps compress this to RETURN=0, JUMP>0, with number of unwinds
@@ -57,7 +44,18 @@ typedef enum {
 #define TOP() (*sp)
 #define SET_TOP(val) *sp = (val)
 
-mp_vm_return_kind_t mp_execute_byte_code(const byte *code, const mp_obj_t *args, uint n_args, const mp_obj_t *args2, uint n_args2, uint n_state, mp_obj_t *ret) {
+mp_vm_return_kind_t mp_execute_byte_code(const byte *code, const mp_obj_t *args, uint n_args, const mp_obj_t *args2, uint n_args2, mp_obj_t *ret) {
+    const byte *ip = code;
+
+    // get code info size, and skip line number table
+    machine_uint_t code_info_size = ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24);
+    ip += code_info_size;
+
+    // bytecode prelude: state size and exception stack size; 16 bit uints
+    machine_uint_t n_state = ip[0] | (ip[1] << 8);
+    machine_uint_t n_exc_stack = ip[2] | (ip[3] << 8);
+    ip += 4;
+
     // allocate state for locals and stack
     mp_obj_t temp_state[10];
     mp_obj_t *state = &temp_state[0];
@@ -65,6 +63,14 @@ mp_vm_return_kind_t mp_execute_byte_code(const byte *code, const mp_obj_t *args,
         state = m_new(mp_obj_t, n_state);
     }
     mp_obj_t *sp = &state[0] - 1;
+
+    // allocate state for exceptions
+    mp_exc_stack exc_state[4];
+    mp_exc_stack *exc_stack = &exc_state[0];
+    if (n_exc_stack > 4) {
+        exc_stack = m_new(mp_exc_stack, n_exc_stack);
+    }
+    mp_exc_stack *exc_sp = &exc_stack[0] - 1;
 
     // init args
     for (uint i = 0; i < n_args; i++) {
@@ -74,26 +80,18 @@ mp_vm_return_kind_t mp_execute_byte_code(const byte *code, const mp_obj_t *args,
         state[n_state - 1 - n_args - i] = args2[i];
     }
 
-    const byte *ip = code;
-
-    // get code info size
-    machine_uint_t code_info_size = ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24);
-    ip += code_info_size;
-
-    // execute prelude to make any cells (closed over variables)
-    {
-        for (uint n_local = *ip++; n_local > 0; n_local--) {
-            uint local_num = *ip++;
-            if (local_num < n_args + n_args2) {
-                state[n_state - 1 - local_num] = mp_obj_new_cell(state[n_state - 1 - local_num]);
-            } else {
-                state[n_state - 1 - local_num] = mp_obj_new_cell(MP_OBJ_NULL);
-            }
+    // bytecode prelude: initialise closed over variables
+    for (uint n_local = *ip++; n_local > 0; n_local--) {
+        uint local_num = *ip++;
+        if (local_num < n_args + n_args2) {
+            state[n_state - 1 - local_num] = mp_obj_new_cell(state[n_state - 1 - local_num]);
+        } else {
+            state[n_state - 1 - local_num] = mp_obj_new_cell(MP_OBJ_NULL);
         }
     }
 
     // execute the byte code
-    mp_vm_return_kind_t vm_return_kind = mp_execute_byte_code_2(code, &ip, &state[n_state - 1], &sp);
+    mp_vm_return_kind_t vm_return_kind = mp_execute_byte_code_2(code, &ip, &state[n_state - 1], &sp, exc_stack, &exc_sp, MP_OBJ_NULL);
 
     switch (vm_return_kind) {
         case MP_VM_RETURN_NORMAL:
@@ -116,7 +114,10 @@ mp_vm_return_kind_t mp_execute_byte_code(const byte *code, const mp_obj_t *args,
 //  MP_VM_RETURN_NORMAL, sp valid, return value in *sp
 //  MP_VM_RETURN_YIELD, ip, sp valid, yielded value in *sp
 //  MP_VM_RETURN_EXCEPTION, exception in fastn[0]
-mp_vm_return_kind_t mp_execute_byte_code_2(const byte *code_info, const byte **ip_in_out, mp_obj_t *fastn, mp_obj_t **sp_in_out) {
+mp_vm_return_kind_t mp_execute_byte_code_2(const byte *code_info, const byte **ip_in_out,
+                                           mp_obj_t *fastn, mp_obj_t **sp_in_out,
+                                           mp_exc_stack *exc_stack, mp_exc_stack **exc_sp_in_out,
+                                           volatile mp_obj_t inject_exc) {
     // careful: be sure to declare volatile any variables read in the exception handler (written is ok, I think)
 
     const byte *ip = *ip_in_out;
@@ -126,14 +127,22 @@ mp_vm_return_kind_t mp_execute_byte_code_2(const byte *code_info, const byte **i
     mp_obj_t obj1, obj2;
     nlr_buf_t nlr;
 
-    volatile machine_uint_t currently_in_except_block = 0; // 0 or 1, to detect nested exceptions
-    mp_exc_stack exc_stack[4];
-    mp_exc_stack *volatile exc_sp = &exc_stack[0] - 1; // stack grows up, exc_sp points to top of stack
+    volatile bool currently_in_except_block = MP_TAGPTR_TAG(*exc_sp_in_out); // 0 or 1, to detect nested exceptions
+    mp_exc_stack *volatile exc_sp = MP_TAGPTR_PTR(*exc_sp_in_out); // stack grows up, exc_sp points to top of stack
     const byte *volatile save_ip = ip; // this is so we can access ip in the exception handler without making ip volatile (which means the compiler can't keep it in a register in the main loop)
 
     // outer exception handling loop
     for (;;) {
+outer_dispatch_loop:
         if (nlr_push(&nlr) == 0) {
+            // If we have exception to inject, now that we finish setting up
+            // execution context, raise it. This works as if RAISE_VARARGS
+            // bytecode was executed.
+            if (inject_exc != MP_OBJ_NULL) {
+                mp_obj_t t = inject_exc;
+                inject_exc = MP_OBJ_NULL;
+                nlr_jump(rt_make_raise_obj(t));
+            }
             // loop to execute byte code
             for (;;) {
 dispatch_loop:
@@ -284,6 +293,11 @@ dispatch_loop:
                         sp -= 3;
                         break;
 
+                    case MP_BC_DELETE_NAME:
+                        DECODE_QSTR;
+                        rt_delete_name(qst);
+                        break;
+
                     case MP_BC_DUP_TOP:
                         obj1 = TOP();
                         PUSH(obj1);
@@ -388,7 +402,7 @@ unwind_jump:
                         ++exc_sp;
                         exc_sp->opcode = op;
                         exc_sp->handler = ip + unum;
-                        exc_sp->val_sp = (((machine_uint_t)sp) | currently_in_except_block);
+                        exc_sp->val_sp = MP_TAGPTR_MAKE(sp, currently_in_except_block);
                         currently_in_except_block = 0; // in a try block now
                         break;
 
@@ -425,8 +439,8 @@ unwind_jump:
 
                     case MP_BC_FOR_ITER:
                         DECODE_ULABEL; // the jump offset if iteration finishes; for labels are always forward
-                        obj1 = rt_iternext(TOP());
-                        if (obj1 == mp_const_stop_iteration) {
+                        obj1 = rt_iternext_allow_raise(TOP());
+                        if (obj1 == MP_OBJ_NULL) {
                             --sp; // pop the exhausted iterator
                             ip += unum; // jump to after for-block
                         } else {
@@ -437,8 +451,8 @@ unwind_jump:
                     // matched against: SETUP_EXCEPT, SETUP_FINALLY, SETUP_WITH
                     case MP_BC_POP_BLOCK:
                         // we are exiting an exception handler, so pop the last one of the exception-stack
-                        assert(exc_sp >= &exc_stack[0]);
-                        currently_in_except_block = (exc_sp->val_sp & 1); // restore previous state
+                        assert(exc_sp >= exc_stack);
+                        currently_in_except_block = MP_TAGPTR_TAG(exc_sp->val_sp); // restore previous state
                         exc_sp--; // pop back to previous exception handler
                         break;
 
@@ -446,11 +460,11 @@ unwind_jump:
                     case MP_BC_POP_EXCEPT:
                         // TODO need to work out how blocks work etc
                         // pops block, checks it's an exception block, and restores the stack, saving the 3 exception values to local threadstate
-                        assert(exc_sp >= &exc_stack[0]);
+                        assert(exc_sp >= exc_stack);
                         assert(currently_in_except_block);
                         //sp = (mp_obj_t*)(*exc_sp--);
                         //exc_sp--; // discard ip
-                        currently_in_except_block = (exc_sp->val_sp & 1); // restore previous state
+                        currently_in_except_block = MP_TAGPTR_TAG(exc_sp->val_sp); // restore previous state
                         exc_sp--; // pop back to previous exception handler
                         //sp -= 3; // pop 3 exception values
                         break;
@@ -556,7 +570,13 @@ unwind_jump:
 
                     case MP_BC_MAKE_CLOSURE:
                         DECODE_UINT;
-                        SET_TOP(rt_make_closure_from_id(unum, TOP()));
+                        SET_TOP(rt_make_closure_from_id(unum, TOP(), MP_OBJ_NULL));
+                        break;
+
+                    case MP_BC_MAKE_CLOSURE_DEFARGS:
+                        DECODE_UINT;
+                        obj1 = POP();
+                        SET_TOP(rt_make_closure_from_id(unum, obj1, TOP()));
                         break;
 
                     case MP_BC_CALL_FUNCTION:
@@ -595,19 +615,26 @@ unwind_return:
                         }
                         nlr_pop();
                         *sp_in_out = sp;
-                        assert(exc_sp == &exc_stack[0] - 1);
+                        assert(exc_sp == exc_stack - 1);
                         return MP_VM_RETURN_NORMAL;
 
                     case MP_BC_RAISE_VARARGS:
                         unum = *ip++;
-                        assert(unum == 1);
-                        obj1 = POP();
+                        assert(unum <= 1);
+                        if (unum == 0) {
+                            // This assumes that nlr.ret_val holds last raised
+                            // exception and is not overwritten since then.
+                            obj1 = nlr.ret_val;
+                        } else {
+                            obj1 = POP();
+                        }
                         nlr_jump(rt_make_raise_obj(obj1));
 
                     case MP_BC_YIELD_VALUE:
                         nlr_pop();
                         *ip_in_out = ip;
                         *sp_in_out = sp;
+                        *exc_sp_in_out = MP_TAGPTR_MAKE(exc_sp, currently_in_except_block);
                         return MP_VM_RETURN_YIELD;
 
                     case MP_BC_IMPORT_NAME:
@@ -637,6 +664,15 @@ unwind_return:
         } else {
             // exception occurred
 
+            // check if it's a StopIteration within a for block
+            if (*save_ip == MP_BC_FOR_ITER && mp_obj_is_subclass_fast(mp_obj_get_type(nlr.ret_val), &mp_type_StopIteration)) {
+                ip = save_ip + 1;
+                DECODE_ULABEL; // the jump offset if iteration finishes; for labels are always forward
+                --sp; // pop the exhausted iterator
+                ip += unum; // jump to after for-block
+                goto outer_dispatch_loop; // continue with dispatch loop
+            }
+
             // set file and line number that the exception occurred at
             // TODO: don't set traceback for exceptions re-raised by END_FINALLY.
             // But consider how to handle nested exceptions.
@@ -657,22 +693,22 @@ unwind_return:
             while (currently_in_except_block) {
                 // nested exception
 
-                assert(exc_sp >= &exc_stack[0]);
+                assert(exc_sp >= exc_stack);
 
                 // TODO make a proper message for nested exception
                 // at the moment we are just raising the very last exception (the one that caused the nested exception)
 
                 // move up to previous exception handler
-                currently_in_except_block = (exc_sp->val_sp & 1); // restore previous state
+                currently_in_except_block = MP_TAGPTR_TAG(exc_sp->val_sp); // restore previous state
                 exc_sp--; // pop back to previous exception handler
             }
 
-            if (exc_sp >= &exc_stack[0]) {
+            if (exc_sp >= exc_stack) {
                 // set flag to indicate that we are now handling an exception
                 currently_in_except_block = 1;
 
                 // catch exception and pass to byte code
-                sp = (mp_obj_t*)(exc_sp->val_sp & (~((machine_uint_t)1)));
+                sp = MP_TAGPTR_PTR(exc_sp->val_sp);
                 ip = exc_sp->handler;
                 // push(traceback, exc-val, exc-type)
                 PUSH(mp_const_none);

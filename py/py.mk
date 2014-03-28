@@ -15,6 +15,7 @@ PY_O_BASENAME = \
 	qstr.o \
 	vstr.o \
 	unicode.o \
+	mpz.o \
 	lexer.o \
 	lexerstr.o \
 	lexerunix.o \
@@ -31,9 +32,12 @@ PY_O_BASENAME = \
 	asmthumb.o \
 	emitnthumb.o \
 	emitinlinethumb.o \
+	formatfloat.o \
+	parsenumbase.o \
+	parsenum.o \
+	emitglue.o \
 	runtime.o \
 	map.o \
-	strtonum.o \
 	obj.o \
 	objarray.o \
 	objbool.o \
@@ -51,10 +55,13 @@ PY_O_BASENAME = \
 	objgetitemiter.o \
 	objint.o \
 	objint_longlong.o \
+	objint_mpz.o \
 	objlist.o \
 	objmap.o \
 	objmodule.o \
+	objobject.o \
 	objnone.o \
+	objnamedtuple.o \
 	objrange.o \
 	objset.o \
 	objslice.o \
@@ -68,10 +75,15 @@ PY_O_BASENAME = \
 	builtin.o \
 	builtinimport.o \
 	builtinevex.o \
-	builtinmp.o \
+	builtintables.o \
+	modarray.o \
+	modcollections.o \
+	modmath.o \
+	modmicropython.o \
 	vm.o \
 	showbc.o \
 	repl.o \
+	intdivmod.o \
 
 # prepend the build destination prefix to the py object files
 PY_O = $(addprefix $(PY_BUILD)/, $(PY_O_BASENAME))

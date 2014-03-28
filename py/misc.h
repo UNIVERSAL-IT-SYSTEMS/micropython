@@ -60,18 +60,14 @@ bool unichar_isxdigit(unichar c);
 #define streq(s1, s2) (strcmp((s1), (s2)) == 0)
 */
 
-long strtonum(const char *restrict s, int base);
-
 /** variable string *********************************************/
 
 typedef struct _vstr_t {
-    int alloc;
-    int len;
+    uint alloc;
+    uint len;
     char *buf;
-    struct {
-        bool had_error : 1;
-        bool fixed_buf : 1;
-    };
+    bool had_error : 1;
+    bool fixed_buf : 1;
 } vstr_t;
 
 // convenience macro to declare a vstr with a fixed size buffer on the stack
@@ -98,7 +94,11 @@ void vstr_add_str(vstr_t *vstr, const char *str);
 void vstr_add_strn(vstr_t *vstr, const char *str, int len);
 //void vstr_add_le16(vstr_t *vstr, unsigned short v);
 //void vstr_add_le32(vstr_t *vstr, unsigned int v);
-void vstr_cut_tail(vstr_t *vstr, int len);
+void vstr_ins_byte(vstr_t *vstr, uint byte_pos, byte b);
+void vstr_ins_char(vstr_t *vstr, uint char_pos, unichar chr);
+void vstr_cut_head_bytes(vstr_t *vstr, uint bytes_to_cut);
+void vstr_cut_tail_bytes(vstr_t *vstr, uint bytes_to_cut);
+void vstr_cut_out_bytes(vstr_t *vstr, uint byte_pos, uint bytes_to_cut);
 void vstr_printf(vstr_t *vstr, const char *fmt, ...);
 
 /** non-dynamic size-bounded variable buffer/string *************/

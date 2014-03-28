@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
 #include <string.h>
 
 #include "mpconfig.h"
@@ -12,7 +11,7 @@
 #define DEBUG_PRINT (1)
 #define DEBUG_printf DEBUG_printf
 #else // don't print debugging info
-#define DEBUG_printf(args...) (void)0
+#define DEBUG_printf(...) (void)0
 #endif
 
 typedef unsigned char byte;
@@ -90,8 +89,8 @@ void gc_init(void *start, void *end) {
     }
 
     DEBUG_printf("GC layout:\n");
-    DEBUG_printf("  alloc table at %p, length %u bytes\n", gc_alloc_table_start, gc_alloc_table_byte_len);
-    DEBUG_printf("  pool at %p, length %u blocks = %u words = %u bytes\n", gc_pool_start, gc_pool_block_len, gc_pool_word_len, gc_pool_word_len * BYTES_PER_WORD);
+    DEBUG_printf("  alloc table at %p, length " UINT_FMT " bytes\n", gc_alloc_table_start, gc_alloc_table_byte_len);
+    DEBUG_printf("  pool at %p, length " UINT_FMT " blocks = " UINT_FMT " words = " UINT_FMT " bytes\n", gc_pool_start, gc_pool_block_len, gc_pool_word_len, gc_pool_word_len * BYTES_PER_WORD);
 }
 
 #define VERIFY_PTR(ptr) ( \
@@ -240,7 +239,7 @@ void gc_info(gc_info_t *info) {
 
 void *gc_alloc(size_t n_bytes) {
     machine_uint_t n_blocks = ((n_bytes + BYTES_PER_BLOCK - 1) & (~(BYTES_PER_BLOCK - 1))) / BYTES_PER_BLOCK;
-    DEBUG_printf("gc_alloc(%u bytes -> %u blocks)\n", n_bytes, n_blocks);
+    DEBUG_printf("gc_alloc(" UINT_FMT " bytes -> " UINT_FMT " blocks)\n", n_bytes, n_blocks);
 
     // check for 0 allocation
     if (n_blocks == 0) {
@@ -326,7 +325,9 @@ machine_uint_t gc_nbytes(void *ptr_in) {
     return 0;
 }
 
-void *gc_realloc(void *ptr, size_t n_bytes) {
+#if 0
+// use this realloc for now, one below is broken
+void *gc_realloc(void *ptr, machine_uint_t n_bytes) {
     machine_uint_t n_existing = gc_nbytes(ptr);
     if (n_bytes <= n_existing) {
         return ptr;
@@ -341,6 +342,77 @@ void *gc_realloc(void *ptr, size_t n_bytes) {
         return ptr2;
     }
 }
+#else
+void *gc_realloc(void *ptr_in, size_t n_bytes) {
+    void *ptr_out = NULL;
+    machine_uint_t block = 0;
+    machine_uint_t ptr = (machine_uint_t)ptr_in;
+
+    if (ptr_in == NULL) {
+        return gc_alloc(n_bytes);
+    }
+
+    if (VERIFY_PTR(ptr)                         // verify pointer
+        && (block = BLOCK_FROM_PTR(ptr))        // get first block
+        && ATB_GET_KIND(block) == AT_HEAD) {    // make sure it's a HEAD block
+
+        byte block_type;
+        machine_uint_t n_free   = 0;
+        machine_uint_t n_blocks = 1; // counting HEAD block
+        machine_uint_t max_block = gc_alloc_table_byte_len * BLOCKS_PER_ATB;
+
+        // get the number of consecutive tail blocks and
+        // the number of free blocks after last tail block
+        // stop if we reach (or are at) end of heap
+        while ((block + n_blocks + n_free) < max_block
+                // stop as soon as we find enough blocks for n_bytes
+                && (n_bytes > ((n_blocks+n_free) * BYTES_PER_BLOCK))
+                // stop if block is HEAD
+                && (block_type = ATB_GET_KIND(block + n_blocks + n_free)) != AT_HEAD) {
+            switch (block_type) {
+                case AT_FREE: n_free++; break;
+                case AT_TAIL: n_blocks++; break;
+                default: break;
+            }
+        }
+        // number of allocated bytes
+        machine_uint_t n_existing = n_blocks * BYTES_PER_BLOCK;
+
+        // check if realloc'ing to a smaller size
+        if (n_bytes <= n_existing) {
+            ptr_out = ptr_in;
+            // free unneeded tail blocks
+            for (machine_uint_t bl = block + n_blocks; ATB_GET_KIND(bl) == AT_TAIL; bl++) {
+                ATB_ANY_TO_FREE(bl);
+            }
+
+        // check if we can expand in place
+        } else if (n_bytes <= (n_existing + (n_free * BYTES_PER_BLOCK))) {
+            // number of blocks needed to expand +1 if there's a remainder
+            machine_uint_t n_diff = ( n_bytes - n_existing)/BYTES_PER_BLOCK+
+                                    ((n_bytes - n_existing)%BYTES_PER_BLOCK!=0);
+
+            DEBUG_printf("gc_realloc: expanding " UINT_FMT " blocks (" UINT_FMT " bytes) to " UINT_FMT " blocks (" UINT_FMT " bytes)\n",
+                    n_existing/BYTES_PER_BLOCK, n_existing, n_existing/BYTES_PER_BLOCK+n_diff, n_existing + n_diff*BYTES_PER_BLOCK);
+
+            // mark rest of blocks as used tail
+            for (machine_uint_t bl = block + n_blocks; bl < (block + n_blocks + n_diff); bl++) {
+                ATB_FREE_TO_TAIL(bl);
+            }
+            ptr_out = ptr_in;
+
+        // try to find a new contiguous chain
+        } else if ((ptr_out = gc_alloc(n_bytes)) != NULL) {
+            DEBUG_printf("gc_realloc: allocating new block\n");
+            memcpy(ptr_out, ptr_in, n_existing);
+            gc_free(ptr_in);
+        }
+    }
+
+    return ptr_out;
+}
+
+#endif
 
 void gc_dump_info() {
     gc_info_t info;
@@ -350,20 +422,25 @@ void gc_dump_info() {
            info.num_1block, info.num_2block, info.max_block);
 }
 
-#if DEBUG_PRINT
-STATIC void gc_dump_at(void) {
+void gc_dump_alloc_table(void) {
+    printf("GC memory layout:");
     for (machine_uint_t bl = 0; bl < gc_alloc_table_byte_len * BLOCKS_PER_ATB; bl++) {
-        printf("block %06u ", bl);
-        switch (ATB_GET_KIND(bl)) {
-            case AT_FREE: printf("FREE"); break;
-            case AT_HEAD: printf("HEAD"); break;
-            case AT_TAIL: printf("TAIL"); break;
-            default: printf("MARK"); break;
+        if (bl % 64 == 0) {
+            printf("\n%04x: ", (uint)bl);
         }
-        printf("\n");
+        int c = ' ';
+        switch (ATB_GET_KIND(bl)) {
+            case AT_FREE: c = '.'; break;
+            case AT_HEAD: c = 'h'; break;
+            case AT_TAIL: c = 't'; break;
+            case AT_MARK: c = 'm'; break;
+        }
+        printf("%c", c);
     }
+    printf("\n");
 }
 
+#if DEBUG_PRINT
 void gc_test(void) {
     machine_uint_t len = 500;
     machine_uint_t *heap = malloc(len);
@@ -389,13 +466,13 @@ void gc_test(void) {
     }
 
     printf("Before GC:\n");
-    gc_dump_at();
+    gc_dump_alloc_table();
     printf("Starting GC...\n");
     gc_collect_start();
     gc_collect_root(ptrs, sizeof(ptrs) / sizeof(void*));
     gc_collect_end();
     printf("After GC:\n");
-    gc_dump_at();
+    gc_dump_alloc_table();
 }
 #endif
 

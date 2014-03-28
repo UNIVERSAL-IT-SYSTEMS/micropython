@@ -1,4 +1,3 @@
-#include <stdint.h>
 #include <stdio.h>
 
 #include "misc.h"
@@ -47,6 +46,33 @@ void gc_helper_get_regs(regs_t arr) {
 }
 #endif
 
+#ifdef __thumb2__
+typedef machine_uint_t regs_t[10];
+
+void gc_helper_get_regs(regs_t arr) {
+    register long r4 asm ("r4");
+    register long r5 asm ("r5");
+    register long r6 asm ("r6");
+    register long r7 asm ("r7");
+    register long r8 asm ("r8");
+    register long r9 asm ("r9");
+    register long r10 asm ("r10");
+    register long r11 asm ("r11");
+    register long r12 asm ("r12");
+    register long r13 asm ("r13");
+    arr[0] = r4;
+    arr[1] = r5;
+    arr[2] = r6;
+    arr[3] = r7;
+    arr[4] = r8;
+    arr[5] = r9;
+    arr[6] = r10;
+    arr[7] = r11;
+    arr[8] = r12;
+    arr[9] = r13;
+}
+#endif
+
 void gc_collect(void) {
     //gc_dump_info();
 
@@ -54,11 +80,11 @@ void gc_collect(void) {
     // this traces .data and .bss sections
     extern char __bss_start, _end;
     //printf(".bss: %p-%p\n", &__bss_start, &_end);
-    gc_collect_root((void**)&__bss_start, ((uint32_t)&_end - (uint32_t)&__bss_start) / sizeof(uint32_t));
+    gc_collect_root((void**)&__bss_start, ((machine_uint_t)&_end - (machine_uint_t)&__bss_start) / sizeof(machine_uint_t));
     regs_t regs;
     gc_helper_get_regs(regs);
     // GC stack (and regs because we captured them)
-    gc_collect_root((void**)&regs, ((uint32_t)stack_top - (uint32_t)&regs) / sizeof(uint32_t));
+    gc_collect_root((void**)&regs, ((machine_uint_t)stack_top - (machine_uint_t)&regs) / sizeof(machine_uint_t));
     gc_collect_end();
 
     //printf("-----\n");

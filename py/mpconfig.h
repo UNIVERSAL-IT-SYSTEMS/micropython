@@ -68,6 +68,7 @@
 // Long int implementation
 #define MICROPY_LONGINT_IMPL_NONE (0)
 #define MICROPY_LONGINT_IMPL_LONGLONG (1)
+#define MICROPY_LONGINT_IMPL_MPZ (2)
 
 #ifndef MICROPY_LONGINT_IMPL
 #define MICROPY_LONGINT_IMPL (MICROPY_LONGINT_IMPL_NONE)
@@ -83,8 +84,24 @@ typedef long long mp_longint_impl_t;
 #define MICROPY_ENABLE_SOURCE_LINE (0)
 #endif
 
-// Whether to support float and complex types
-#ifndef MICROPY_ENABLE_FLOAT
+// Float and complex implementation
+#define MICROPY_FLOAT_IMPL_NONE (0)
+#define MICROPY_FLOAT_IMPL_FLOAT (1)
+#define MICROPY_FLOAT_IMPL_DOUBLE (2)
+
+#ifndef MICROPY_FLOAT_IMPL
+#define MICROPY_FLOAT_IMPL (MICROPY_FLOAT_IMPL_NONE)
+#endif
+
+#if MICROPY_FLOAT_IMPL == MICROPY_FLOAT_IMPL_FLOAT
+#define MICROPY_ENABLE_FLOAT (1)
+#define MICROPY_FLOAT_C_FUN(fun) fun##f
+typedef float mp_float_t;
+#elif MICROPY_FLOAT_IMPL == MICROPY_FLOAT_IMPL_DOUBLE
+#define MICROPY_ENABLE_FLOAT (1)
+#define MICROPY_FLOAT_C_FUN(fun) fun
+typedef double mp_float_t;
+#else
 #define MICROPY_ENABLE_FLOAT (0)
 #endif
 
@@ -108,10 +125,16 @@ typedef long long mp_longint_impl_t;
 #define MICROPY_PATH_MAX (512)
 #endif
 
-// Additional builtin function definitions - see runtime.c:builtin_table for format.
+// Additional builtin function definitions - see builtintables.c:builtin_object_table for format.
 #ifndef MICROPY_EXTRA_BUILTINS
 #define MICROPY_EXTRA_BUILTINS
 #endif
+
+// Additional builtin module definitions - see builtintables.c:builtin_module_table for format.
+#ifndef MICROPY_EXTRA_BUILTIN_MODULES
+#define MICROPY_EXTRA_BUILTIN_MODULES
+#endif
+
 /*****************************************************************************/
 /* Miscellaneous settings                                                    */
 

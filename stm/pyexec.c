@@ -88,7 +88,7 @@ int readline(vstr_t *line, const char *prompt) {
                 escape = true;
             } else if (c == 127) {
                 if (vstr_len(line) > len) {
-                    vstr_cut_tail(line, 1);
+                    vstr_cut_tail_bytes(line, 1);
                     stdout_tx_str("\b \b");
                 }
             } else if (32 <= c && c <= 126) {
@@ -245,6 +245,24 @@ void pyexec_repl(void) {
     stdout_tx_str("Micro Python build <git hash> on 25/1/2014; " MICROPY_HW_BOARD_NAME " with STM32F405RG\r\n");
     stdout_tx_str("Type \"help()\" for more information.\r\n");
 
+    // to test ctrl-C
+    /*
+    {
+        uint32_t x[4] = {0x424242, 0xdeaddead, 0x242424, 0xdeadbeef};
+        for (;;) {
+            nlr_buf_t nlr;
+            printf("pyexec_repl: %p\n", x);
+            usb_vcp_set_interrupt_char(VCP_CHAR_CTRL_C);
+            if (nlr_push(&nlr) == 0) {
+                for (;;) {
+                }
+            } else {
+                printf("break\n");
+            }
+        }
+    }
+    */
+
     vstr_t line;
     vstr_init(&line, 32);
 
@@ -299,3 +317,5 @@ mp_obj_t pyb_set_repl_info(mp_obj_t o_value) {
     repl_display_debugging_info = mp_obj_get_int(o_value);
     return mp_const_none;
 }
+
+MP_DEFINE_CONST_FUN_OBJ_1(pyb_set_repl_info_obj, pyb_set_repl_info);

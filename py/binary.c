@@ -1,4 +1,3 @@
-#include <stdlib.h>
 #include <stdint.h>
 #include <assert.h>
 
@@ -6,7 +5,6 @@
 #include "mpconfig.h"
 #include "qstr.h"
 #include "obj.h"
-#include "objint.h"
 #include "binary.h"
 
 // Helpers to work with binary-encoded data

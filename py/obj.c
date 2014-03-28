@@ -1,8 +1,5 @@
-#include <stdint.h>
-#include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
-#include <string.h>
 #include <assert.h>
 
 #include "nlr.h"
@@ -84,9 +81,16 @@ machine_int_t mp_obj_hash(mp_obj_t o_in) {
         return mp_obj_str_get_hash(o_in);
     } else if (MP_OBJ_IS_TYPE(o_in, &none_type)) {
         return (machine_int_t)o_in;
+    } else if (MP_OBJ_IS_TYPE(o_in, &fun_native_type) || MP_OBJ_IS_TYPE(o_in, &fun_bc_type)) {
+        return (machine_int_t)o_in;
+    } else if (MP_OBJ_IS_TYPE(o_in, &tuple_type)) {
+        return mp_obj_tuple_hash(o_in);
+
+    // TODO hash class and instances
+    // TODO delegate to __hash__ method if it exists
+
     } else {
-        assert(0);
-        return 0;
+        nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_TypeError, "unhashable type: '%s'", mp_obj_get_type_str(o_in)));
     }
 }
 
@@ -165,14 +169,16 @@ machine_int_t mp_obj_get_int(mp_obj_t arg) {
 }
 
 #if MICROPY_ENABLE_FLOAT
-machine_float_t mp_obj_get_float(mp_obj_t arg) {
+mp_float_t mp_obj_get_float(mp_obj_t arg) {
     if (arg == mp_const_false) {
         return 0;
     } else if (arg == mp_const_true) {
         return 1;
     } else if (MP_OBJ_IS_SMALL_INT(arg)) {
         return MP_OBJ_SMALL_INT_VALUE(arg);
-    } else if (MP_OBJ_IS_TYPE(arg, &float_type)) {
+    } else if (MP_OBJ_IS_TYPE(arg, &int_type)) {
+        return mp_obj_int_as_float(arg);
+    } else if (MP_OBJ_IS_TYPE(arg, &mp_type_float)) {
         return mp_obj_float_get(arg);
     } else {
         nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_TypeError, "can't convert %s to float", mp_obj_get_type_str(arg)));
@@ -189,10 +195,10 @@ void mp_obj_get_complex(mp_obj_t arg, mp_float_t *real, mp_float_t *imag) {
     } else if (MP_OBJ_IS_SMALL_INT(arg)) {
         *real = MP_OBJ_SMALL_INT_VALUE(arg);
         *imag = 0;
-    } else if (MP_OBJ_IS_TYPE(arg, &float_type)) {
+    } else if (MP_OBJ_IS_TYPE(arg, &mp_type_float)) {
         *real = mp_obj_float_get(arg);
         *imag = 0;
-    } else if (MP_OBJ_IS_TYPE(arg, &complex_type)) {
+    } else if (MP_OBJ_IS_TYPE(arg, &mp_type_complex)) {
         mp_obj_complex_get(arg, real, imag);
     } else {
         nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_TypeError, "can't convert %s to complex", mp_obj_get_type_str(arg)));
@@ -200,38 +206,58 @@ void mp_obj_get_complex(mp_obj_t arg, mp_float_t *real, mp_float_t *imag) {
 }
 #endif
 
-mp_obj_t *mp_obj_get_array_fixed_n(mp_obj_t o_in, machine_int_t n) {
-    if (MP_OBJ_IS_TYPE(o_in, &tuple_type) || MP_OBJ_IS_TYPE(o_in, &list_type)) {
-        uint seq_len;
-        mp_obj_t *seq_items;
-        if (MP_OBJ_IS_TYPE(o_in, &tuple_type)) {
-            mp_obj_tuple_get(o_in, &seq_len, &seq_items);
-        } else {
-            mp_obj_list_get(o_in, &seq_len, &seq_items);
-        }
-        if (seq_len != n) {
-            nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_IndexError, "requested length %d but object has length %d", n, seq_len));
-        }
-        return seq_items;
+void mp_obj_get_array(mp_obj_t o, uint *len, mp_obj_t **items) {
+    if (MP_OBJ_IS_TYPE(o, &tuple_type)) {
+        mp_obj_tuple_get(o, len, items);
+    } else if (MP_OBJ_IS_TYPE(o, &list_type)) {
+        mp_obj_list_get(o, len, items);
     } else {
-        nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_TypeError, "object '%s' is not a tuple or list", mp_obj_get_type_str(o_in)));
+        nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_TypeError, "object '%s' is not a tuple or list", mp_obj_get_type_str(o)));
     }
 }
 
-uint mp_get_index(const mp_obj_type_t *type, machine_uint_t len, mp_obj_t index) {
-    // TODO False and True are considered 0 and 1 for indexing purposes
+void mp_obj_get_array_fixed_n(mp_obj_t o, uint len, mp_obj_t **items) {
+    if (MP_OBJ_IS_TYPE(o, &tuple_type) || MP_OBJ_IS_TYPE(o, &list_type)) {
+        uint seq_len;
+        if (MP_OBJ_IS_TYPE(o, &tuple_type)) {
+            mp_obj_tuple_get(o, &seq_len, items);
+        } else {
+            mp_obj_list_get(o, &seq_len, items);
+        }
+        if (seq_len != len) {
+            nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_IndexError, "requested length %d but object has length %d", len, seq_len));
+        }
+    } else {
+        nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_TypeError, "object '%s' is not a tuple or list", mp_obj_get_type_str(o)));
+    }
+}
+
+// is_slice determines whether the index is a slice index
+uint mp_get_index(const mp_obj_type_t *type, machine_uint_t len, mp_obj_t index, bool is_slice) {
+    int i;
     if (MP_OBJ_IS_SMALL_INT(index)) {
-        int i = MP_OBJ_SMALL_INT_VALUE(index);
-        if (i < 0) {
-            i += len;
-        }
-        if (i < 0 || i >= len) {
-            nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_IndexError, "%s index out of range", qstr_str(type->name)));
-        }
-        return i;
+        i = MP_OBJ_SMALL_INT_VALUE(index);
+    } else if (MP_OBJ_IS_TYPE(index, &bool_type)) {
+        i = (index == mp_const_true ? 1 : 0);
     } else {
         nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_TypeError, "%s indices must be integers, not %s", qstr_str(type->name), mp_obj_get_type_str(index)));
     }
+
+    if (i < 0) {
+        i += len;
+    }
+    if (is_slice) {
+        if (i < 0) {
+            i = 0;
+        } else if (i > len) {
+            i = len;
+        }
+    } else {
+        if (i < 0 || i >= len) {
+            nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_IndexError, "%s index out of range", qstr_str(type->name)));
+        }
+    }
+    return i;
 }
 
 // may return MP_OBJ_NULL

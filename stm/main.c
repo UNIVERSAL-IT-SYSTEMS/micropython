@@ -24,6 +24,7 @@
 #include "lexerfatfs.h"
 #include "parse.h"
 #include "obj.h"
+#include "objmodule.h"
 #include "parsehelper.h"
 #include "compile.h"
 #include "runtime0.h"
@@ -34,24 +35,40 @@
 #include "pendsv.h"
 #include "pyexec.h"
 #include "led.h"
-#include "gpio.h"
 #include "servo.h"
 #include "lcd.h"
 #include "storage.h"
 #include "sdcard.h"
 #include "accel.h"
-#include "usart.h"
 #include "usb.h"
 #include "timer.h"
-#include "audio.h"
 #include "pybwlan.h"
-#include "i2c.h"
 #include "usrsw.h"
-#include "adc.h"
 #include "rtc.h"
 #include "file.h"
 #include "pin.h"
 #include "socket.h"
+
+/* FreeRTOS includes */
+#include "FreeRTOS.h"
+#include "task.h"
+/* PicoTCP includes */
+#include "pico_defines.h"
+#include "pico_stack.h"
+#include "pico_config.h"
+#include "pico_ipv4.h"
+#include "pico_ipv6.h"
+#include "pico_socket.h"
+#include "pico_icmp4.h"
+#include "pico_zmq.h"
+#include "pico_device.h"
+#include "pico_f4x7_eth.h"
+#include "pico_bsd_sockets.h"
+#include "pico_osal.h"
+#include "pico_constants.h"
+
+#include "exti.h"
+#include "pybmodule.h"
 
 int errno;
 
@@ -59,6 +76,11 @@ static FATFS fatfs0;
 #if MICROPY_HW_HAS_SDCARD
 static FATFS fatfs1;
 #endif
+
+
+static struct pico_device *pico_dev_eth = NULL;
+
+volatile pico_time full_tick = 0;
 
 void flash_error(int n) {
     for (int i = 0; i < n; i++) {
@@ -82,33 +104,26 @@ void __fatal_error(const char *msg) {
     }
 }
 
-static mp_obj_t pyb_config_source_dir = MP_OBJ_NULL;
-static mp_obj_t pyb_config_main = MP_OBJ_NULL;
+STATIC mp_obj_t pyb_config_source_dir = MP_OBJ_NULL;
+STATIC mp_obj_t pyb_config_main = MP_OBJ_NULL;
 
-mp_obj_t pyb_source_dir(mp_obj_t source_dir) {
+STATIC mp_obj_t pyb_source_dir(mp_obj_t source_dir) {
     if (MP_OBJ_IS_STR(source_dir)) {
         pyb_config_source_dir = source_dir;
     }
     return mp_const_none;
 }
 
-mp_obj_t pyb_main(mp_obj_t main) {
+MP_DEFINE_CONST_FUN_OBJ_1(pyb_source_dir_obj, pyb_source_dir);
+
+STATIC mp_obj_t pyb_main(mp_obj_t main) {
     if (MP_OBJ_IS_STR(main)) {
         pyb_config_main = main;
     }
     return mp_const_none;
 }
 
-// sync all file systems
-mp_obj_t pyb_sync(void) {
-    storage_flush();
-    return mp_const_none;
-}
-
-mp_obj_t pyb_delay(mp_obj_t count) {
-    sys_tick_delay_ms(mp_obj_get_int(count));
-    return mp_const_none;
-}
+MP_DEFINE_CONST_FUN_OBJ_1(pyb_main_obj, pyb_main);
 
 void fatality(void) {
     led_state(PYB_LED_R1, 1);
@@ -141,6 +156,7 @@ static const char *help_text =
 "    pyb.gc()       -- run the garbage collector\n"
 "    pyb.repl_info(<val>) -- enable/disable printing of info after each command\n"
 "    pyb.delay(<n>) -- wait for n milliseconds\n"
+"    pyb.udelay(<n>) -- wait for n microseconds\n"
 "    pyb.Led(<n>)   -- create Led object for LED n (n=1,2)\n"
 "                      Led methods: on(), off()\n"
 "    pyb.Servo(<n>) -- create Servo object for servo n (n=1,2,3,4)\n"
@@ -158,129 +174,6 @@ static const char *help_text =
 static mp_obj_t pyb_help(void) {
     printf("%s", help_text);
     return mp_const_none;
-}
-
-// get lots of info about the board
-static mp_obj_t pyb_info(void) {
-    // get and print unique id; 96 bits
-    {
-        byte *id = (byte*)0x1fff7a10;
-        printf("ID=%02x%02x%02x%02x:%02x%02x%02x%02x:%02x%02x%02x%02x\n", id[0], id[1], id[2], id[3], id[4], id[5], id[6], id[7], id[8], id[9], id[10], id[11]);
-    }
-
-    // get and print clock speeds
-    // SYSCLK=168MHz, HCLK=168MHz, PCLK1=42MHz, PCLK2=84MHz
-    {
-        RCC_ClocksTypeDef rcc_clocks;
-        RCC_GetClocksFreq(&rcc_clocks);
-        printf("S=%lu\nH=%lu\nP1=%lu\nP2=%lu\n", rcc_clocks.SYSCLK_Frequency, rcc_clocks.HCLK_Frequency, rcc_clocks.PCLK1_Frequency, rcc_clocks.PCLK2_Frequency);
-    }
-
-    // to print info about memory
-    {
-        printf("_text_end=%p\n", &_text_end);
-        printf("_data_start_init=%p\n", &_data_start_init);
-        printf("_data_start=%p\n", &_data_start);
-        printf("_data_end=%p\n", &_data_end);
-        printf("_bss_start=%p\n", &_bss_start);
-        printf("_bss_end=%p\n", &_bss_end);
-        printf("_stack_end=%p\n", &_stack_end);
-        printf("_ram_start=%p\n", &_ram_start);
-        printf("_heap_start=%p\n", &_heap_start);
-        printf("_heap_end=%p\n", &_heap_end);
-        printf("_ram_end=%p\n", &_ram_end);
-    }
-
-    // qstr info
-    {
-        uint n_pool, n_qstr, n_str_data_bytes, n_total_bytes;
-        qstr_pool_info(&n_pool, &n_qstr, &n_str_data_bytes, &n_total_bytes);
-        printf("qstr:\n  n_pool=%u\n  n_qstr=%u\n  n_str_data_bytes=%u\n  n_total_bytes=%u\n", n_pool, n_qstr, n_str_data_bytes, n_total_bytes);
-    }
-
-    // GC info
-    {
-        gc_info_t info;
-        gc_info(&info);
-        printf("GC:\n");
-        printf("  %lu total\n", info.total);
-        printf("  %lu : %lu\n", info.used, info.free);
-        printf("  1=%lu 2=%lu m=%lu\n", info.num_1block, info.num_2block, info.max_block);
-    }
-
-    // free space on flash
-    {
-        DWORD nclst;
-        FATFS *fatfs;
-        f_getfree("0:", &nclst, &fatfs);
-        printf("LFS free: %u bytes\n", (uint)(nclst * fatfs->csize * 512));
-    }
-
-    return mp_const_none;
-}
-
-static void SYSCLKConfig_STOP(void) {
-    /* After wake-up from STOP reconfigure the system clock */
-    /* Enable HSE */
-    RCC_HSEConfig(RCC_HSE_ON);
-
-    /* Wait till HSE is ready */
-    while (RCC_GetFlagStatus(RCC_FLAG_HSERDY) == RESET) {
-    }
-
-    /* Enable PLL */
-    RCC_PLLCmd(ENABLE);
-
-    /* Wait till PLL is ready */
-    while (RCC_GetFlagStatus(RCC_FLAG_PLLRDY) == RESET) {
-    }
-
-    /* Select PLL as system clock source */
-    RCC_SYSCLKConfig(RCC_SYSCLKSource_PLLCLK);
-
-    /* Wait till PLL is used as system clock source */
-    while (RCC_GetSYSCLKSource() != 0x08) {
-    }
-}
-
-static mp_obj_t pyb_stop(void) {
-    PWR_EnterSTANDBYMode();
-    //PWR_FlashPowerDownCmd(ENABLE); don't know what the logic is with this
-
-    /* Enter Stop Mode */
-    PWR_EnterSTOPMode(PWR_Regulator_LowPower, PWR_STOPEntry_WFI);
-
-    /* Configures system clock after wake-up from STOP: enable HSE, PLL and select 
-     *        PLL as system clock source (HSE and PLL are disabled in STOP mode) */
-    SYSCLKConfig_STOP();
-
-    //PWR_FlashPowerDownCmd(DISABLE);
-
-    return mp_const_none;
-}
-
-static mp_obj_t pyb_standby(void) {
-    PWR_EnterSTANDBYMode();
-    return mp_const_none;
-}
-
-mp_obj_t pyb_hid_send_report(mp_obj_t arg) {
-    mp_obj_t *items = mp_obj_get_array_fixed_n(arg, 4);
-    uint8_t data[4];
-    data[0] = mp_obj_get_int(items[0]);
-    data[1] = mp_obj_get_int(items[1]);
-    data[2] = mp_obj_get_int(items[2]);
-    data[3] = mp_obj_get_int(items[3]);
-    usb_hid_send_report(data);
-    return mp_const_none;
-}
-
-mp_obj_t pyb_rng_get(void) {
-    return mp_obj_new_int(RNG_GetRandomNumber() >> 16);
-}
-
-mp_obj_t pyb_millis(void) {
-    return mp_obj_new_int(sys_tick_counter);
 }
 
 int main(void) {
@@ -347,16 +240,13 @@ int main(void) {
     led_state(PYB_LED_G1, 1);
 
     // more sub-system init
-#if MICROPY_HW_HAS_SWITCH
-    switch_init();
-#endif
 #if MICROPY_HW_HAS_SDCARD
     sdcard_init();
 #endif
     storage_init();
 
     // uncomment these 2 lines if you want REPL on USART_6 (or another usart) as well as on USB VCP
-    //pyb_usart_global_debug = PYB_USART_3;
+    //pyb_usart_global_debug = PYB_USART_YA;
     //usart_init(pyb_usart_global_debug, 115200);
 
     int first_soft_reset = true;
@@ -375,6 +265,12 @@ soft_reset:
     def_path[2] = MP_OBJ_NEW_QSTR(MP_QSTR_0_colon__slash_lib);
     sys_path = mp_obj_new_list(3, def_path);
 
+    exti_init();
+
+#if MICROPY_HW_HAS_SWITCH
+    switch_init();
+#endif
+
 #if MICROPY_HW_HAS_LCD
     // LCD init (just creates class, init hardware by calling LCD())
     lcd_init();
@@ -383,11 +279,6 @@ soft_reset:
 #if MICROPY_HW_ENABLE_SERVO
     // servo
     servo_init();
-#endif
-
-#if MICROPY_HW_ENABLE_AUDIO
-    // audio
-    audio_init();
 #endif
 
 #if MICROPY_HW_ENABLE_TIMER
@@ -401,60 +292,14 @@ soft_reset:
     RNG_Cmd(ENABLE);
 #endif
 
-    // add some functions to the python namespace
-    {
-        rt_store_name(MP_QSTR_help, rt_make_function_n(0, pyb_help));
+    pin_map_init();
 
-        mp_obj_t m = mp_obj_new_module(MP_QSTR_pyb);
-        rt_store_attr(m, MP_QSTR_info, rt_make_function_n(0, pyb_info));
-        rt_store_attr(m, MP_QSTR_gc, (mp_obj_t)&pyb_gc_obj);
-        rt_store_attr(m, qstr_from_str("repl_info"), rt_make_function_n(1, pyb_set_repl_info));
-#if MICROPY_HW_HAS_SDCARD
-        rt_store_attr(m, qstr_from_str("SD"), (mp_obj_t)&pyb_sdcard_obj);
-#endif
-        rt_store_attr(m, MP_QSTR_stop, rt_make_function_n(0, pyb_stop));
-        rt_store_attr(m, MP_QSTR_standby, rt_make_function_n(0, pyb_standby));
-        rt_store_attr(m, MP_QSTR_source_dir, rt_make_function_n(1, pyb_source_dir));
-        rt_store_attr(m, MP_QSTR_main, rt_make_function_n(1, pyb_main));
-        rt_store_attr(m, MP_QSTR_sync, rt_make_function_n(0, pyb_sync));
-        rt_store_attr(m, MP_QSTR_delay, rt_make_function_n(1, pyb_delay));
-#if MICROPY_HW_HAS_SWITCH
-        rt_store_attr(m, MP_QSTR_switch, (mp_obj_t)&pyb_switch_obj);
-#endif
-#if MICROPY_HW_ENABLE_SERVO
-        rt_store_attr(m, MP_QSTR_servo, rt_make_function_n(2, pyb_servo_set));
-#endif
-        rt_store_attr(m, MP_QSTR_pwm, rt_make_function_n(2, pyb_pwm_set));
-#if MICROPY_HW_HAS_MMA7660
-        rt_store_attr(m, MP_QSTR_accel, (mp_obj_t)&pyb_accel_read_obj);
-        rt_store_attr(m, MP_QSTR_accel_read, (mp_obj_t)&pyb_accel_read_all_obj);
-        rt_store_attr(m, MP_QSTR_accel_mode, (mp_obj_t)&pyb_accel_write_mode_obj);
-#endif
-        rt_store_attr(m, MP_QSTR_hid, rt_make_function_n(1, pyb_hid_send_report));
-#if MICROPY_HW_ENABLE_RTC
-        rt_store_attr(m, MP_QSTR_time, (mp_obj_t)&pyb_rtc_read_obj);
-        rt_store_attr(m, qstr_from_str("rtc_info"), (mp_obj_t)&pyb_rtc_info_obj);
-#endif
-#if MICROPY_HW_ENABLE_RNG
-        rt_store_attr(m, MP_QSTR_rand, rt_make_function_n(0, pyb_rng_get));
-#endif
-        rt_store_attr(m, MP_QSTR_Led, (mp_obj_t)&pyb_Led_obj);
-#if MICROPY_HW_ENABLE_SERVO
-        rt_store_attr(m, MP_QSTR_Servo, rt_make_function_n(1, pyb_Servo));
-#endif
-        rt_store_attr(m, MP_QSTR_I2C, rt_make_function_n(2, pyb_I2C));
-        rt_store_attr(m, MP_QSTR_Usart, rt_make_function_n(2, pyb_Usart));
-        rt_store_attr(m, qstr_from_str("ADC_all"), (mp_obj_t)&pyb_ADC_all_obj);
-        rt_store_attr(m, MP_QSTR_ADC, (mp_obj_t)&pyb_ADC_obj);
-        rt_store_attr(m, qstr_from_str("millis"), rt_make_function_n(0, pyb_millis));
+    // add some functions to the builtin Python namespace
+    rt_store_name(MP_QSTR_help, rt_make_function_n(0, pyb_help));
+    rt_store_name(MP_QSTR_open, rt_make_function_n(2, pyb_io_open));
 
-        pin_map_init(m);
-        gpio_init(m);
-
-        rt_store_name(MP_QSTR_pyb, m);
-
-        rt_store_name(MP_QSTR_open, rt_make_function_n(2, pyb_io_open));
-    }
+    // load the pyb module
+    mp_module_register(MP_QSTR_pyb, (mp_obj_t)&pyb_module);
 
     // check if user switch held (initiates reset of filesystem)
     bool reset_filesystem = false;
@@ -578,7 +423,7 @@ soft_reset:
     pyb_usb_host_init();
 #elif defined(USE_DEVICE_MODE)
     // USB device
-    pyb_usb_dev_init();
+    pyb_usb_dev_init(PYB_USB_DEV_VCP_MSC);
 #endif
 
     // run main script
@@ -647,7 +492,7 @@ soft_reset:
     pyexec_repl();
 
     printf("PYB: sync filesystems\n");
-    pyb_sync();
+    storage_flush();
 
     printf("PYB: soft reboot\n");
 
@@ -655,24 +500,66 @@ soft_reset:
     goto soft_reset;
 }
 
-// these 2 functions seem to actually work... no idea why
-// replacing with libgcc does not work (probably due to wrong calling conventions)
-double __aeabi_f2d(float x) {
-    // TODO
-    return 0.0;
+#define MICROPY_TASK_STACK  900 /* words */
+#define PICO_TICK_STACK     900 /* words */
+
+
+/* PicoApp task Handle */
+// TODO: Might not be needed any more when integrated into micropy!
+xTaskHandle xPicoAppTaskHandle;
+
+
+void picoTickTask(void *pvParameters) {
+    uint8_t mac[6] = {0x12,0x34,0x00,0x13,0x0b,0x00};
+    pico_stack_init();
+
+    pico_dev_eth = (struct pico_device *) pico_eth_create("stm32-eth", mac);
+    if (!pico_dev_eth)
+        while (1);
+
+
+
+    /* Only run the PicoApp once the stack has been set up, links added, ... */
+    //vTaskResume(xPicoAppTaskHandle);
+
+    for (;;) {
+        pico_bsd_stack_tick();
+        vTaskDelay(1);
+    }
 }
 
-float __aeabi_d2f(double x) {
-    // TODO
-    return 0.0;
+int main(void) {
+    // TODO disable JTAG
+
+    // update the SystemCoreClock variable
+    SystemCoreClockUpdate();
+
+
+    // Init micropython mem alloc
+    // GC init
+    gc_init(&_heap_start, &_heap_end);
+
+    // set interrupt priority config to use all 4 bits for pre-empting
+    NVIC_PriorityGroupConfig(NVIC_PriorityGroup_4);
+
+    // enable the CCM RAM and the GPIO's
+    RCC->AHB1ENR |= RCC_AHB1ENR_CCMDATARAMEN | RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_GPIOBEN | RCC_AHB1ENR_GPIOCEN | RCC_AHB1ENR_GPIODEN;
+
+    /* Init picoLock */
+    pico_bsd_init();
+
+    /* Create picoTCP task */
+    xTaskCreate(picoTickTask, ( signed portCHAR * ) "picoTick", PICO_TICK_STACK, NULL, 3, NULL);
+    /* Create micropy task */
+    xTaskCreate(micropy_task, ( signed portCHAR * ) "microPy", MICROPY_TASK_STACK, NULL, 3, NULL);
+
+    /* Start the scheduler. */
+    vTaskStartScheduler();
+
+    for (;;) {}
+
+    /* Free picoLock */
+    pico_bsd_deinit();
+
 }
 
-double sqrt(double x) {
-    // TODO
-    return 0.0;
-}
-
-machine_float_t machine_sqrt(machine_float_t x) {
-    // TODO
-    return x;
-}

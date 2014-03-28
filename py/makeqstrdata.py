@@ -1,5 +1,8 @@
+from __future__ import print_function
+
 import argparse
 import re
+import sys
 
 # codepoint2name is different in Python 2 to Python 3
 import platform
@@ -15,9 +18,9 @@ codepoint2name[ord('/')] = 'slash'
 
 # this must match the equivalent function in qstr.c
 def compute_hash(qstr):
-    hash = 0
+    hash = 5381
     for char in qstr:
-        hash += ord(char)
+        hash = (hash * 33) ^ ord(char)
     return hash & 0xffff
 
 def do_work(infiles):
@@ -37,7 +40,7 @@ def do_work(infiles):
                 # verify line is of the correct form
                 match = re.match(r'Q\((.+)\)$', line)
                 if not match:
-                    print('({}:{}) bad qstr format, got {}'.format(infile, line_number, line))
+                    print('({}:{}) bad qstr format, got {}'.format(infile, line_number, line), file=sys.stderr)
                     return False
 
                 # get the qstr value
@@ -68,7 +71,7 @@ def main():
 
     result = do_work(args.files)
     if not result:
-        print('exiting with error code')
+        print('exiting with error code', file=sys.stderr)
         exit(1)
 
 if __name__ == "__main__":

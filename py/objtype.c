@@ -1,5 +1,3 @@
-#include <stdlib.h>
-#include <stdint.h>
 #include <string.h>
 #include <assert.h>
 
@@ -32,21 +30,12 @@ STATIC mp_obj_t mp_obj_new_class(mp_obj_t class) {
 STATIC mp_obj_t mp_obj_class_lookup(const mp_obj_type_t *type, qstr attr) {
     for (;;) {
         if (type->locals_dict != NULL) {
-            // search locals_dict (the dynamically created set of methods/attributes)
-
+            // search locals_dict (the set of methods/attributes)
             assert(MP_OBJ_IS_TYPE(type->locals_dict, &dict_type)); // Micro Python restriction, for now
             mp_map_t *locals_map = mp_obj_dict_get_map(type->locals_dict);
             mp_map_elem_t *elem = mp_map_lookup(locals_map, MP_OBJ_NEW_QSTR(attr), MP_MAP_LOOKUP);
             if (elem != NULL) {
                 return elem->value;
-            }
-        } else if (type->methods != NULL) {
-            // search methods (the const set of methods)
-
-            for (const mp_method_t *meth = type->methods; meth->name != NULL; meth++) {
-                if (strcmp(meth->name, qstr_str(attr)) == 0) {
-                    return (mp_obj_t)meth->fun;
-                }
             }
         }
 
@@ -78,6 +67,21 @@ STATIC mp_obj_t mp_obj_class_lookup(const mp_obj_type_t *type, qstr attr) {
 }
 
 STATIC void class_print(void (*print)(void *env, const char *fmt, ...), void *env, mp_obj_t self_in, mp_print_kind_t kind) {
+    mp_obj_class_t *self = self_in;
+    qstr meth = (kind == PRINT_STR) ? MP_QSTR___str__ : MP_QSTR___repr__;
+    mp_obj_t member = mp_obj_class_lookup(self->base.type, meth);
+    if (member == MP_OBJ_NULL && kind == PRINT_STR) {
+        // If there's no __str__, fall back to __repr__
+        member = mp_obj_class_lookup(self->base.type, MP_QSTR___repr__);
+    }
+
+    if (member != MP_OBJ_NULL) {
+        mp_obj_t r = rt_call_function_1(member, self_in);
+        mp_obj_print_helper(print, env, r, PRINT_STR);
+        return;
+    }
+
+    // TODO: CPython prints fully-qualified type name
     print(env, "<%s object at %p>", mp_obj_get_type_str(self_in), self_in);
 }
 
@@ -205,24 +209,20 @@ STATIC void class_load_attr(mp_obj_t self_in, qstr attr, mp_obj_t *dest) {
     }
     mp_obj_t member = mp_obj_class_lookup(self->base.type, attr);
     if (member != MP_OBJ_NULL) {
-        if (mp_obj_is_callable(member)) {
-            // class member is callable so build a bound method
-            // check if the methods are functions, static or class methods
-            // see http://docs.python.org/3.3/howto/descriptor.html
-            // TODO check that this is the correct place to have this logic
-            if (MP_OBJ_IS_TYPE(member, &mp_type_staticmethod)) {
-                // return just the function
-                dest[0] = ((mp_obj_static_class_method_t*)member)->fun;
-            } else if (MP_OBJ_IS_TYPE(member, &mp_type_classmethod)) {
-                // return a bound method, with self being the type of this object
-                dest[0] = ((mp_obj_static_class_method_t*)member)->fun;
-                dest[1] = mp_obj_get_type(self_in);
-            } else {
-                // return a bound method, with self being this object
-                dest[0] = member;
-                dest[1] = self_in;
-            }
-            return;
+        // check if the methods are functions, static or class methods
+        // see http://docs.python.org/3.3/howto/descriptor.html
+        // TODO check that this is the correct place to have this logic
+        if (MP_OBJ_IS_TYPE(member, &mp_type_staticmethod)) {
+            // return just the function
+            dest[0] = ((mp_obj_static_class_method_t*)member)->fun;
+        } else if (MP_OBJ_IS_TYPE(member, &mp_type_classmethod)) {
+            // return a bound method, with self being the type of this object
+            dest[0] = ((mp_obj_static_class_method_t*)member)->fun;
+            dest[1] = mp_obj_get_type(self_in);
+        } else if (mp_obj_is_callable(member)) {
+            // return a bound method, with self being this object
+            dest[0] = member;
+            dest[1] = self_in;
         } else {
             // class member is a value, so just return that value
             dest[0] = member;
@@ -325,12 +325,16 @@ STATIC bool type_store_attr(mp_obj_t self_in, qstr attr, mp_obj_t value) {
 
     if (self->locals_dict != NULL) {
         assert(MP_OBJ_IS_TYPE(self->locals_dict, &dict_type)); // Micro Python restriction, for now
-        mp_map_t *locals_map = ((void*)self->locals_dict + sizeof(mp_obj_base_t)); // XXX hack to get map object from dict object
-        mp_map_lookup(locals_map, MP_OBJ_NEW_QSTR(attr), MP_MAP_LOOKUP_ADD_IF_NOT_FOUND)->value = value;
-        return true;
-    } else {
-        return false;
+        mp_map_t *locals_map = mp_obj_dict_get_map(self->locals_dict);
+        mp_map_elem_t *elem = mp_map_lookup(locals_map, MP_OBJ_NEW_QSTR(attr), MP_MAP_LOOKUP_ADD_IF_NOT_FOUND);
+        // note that locals_map may be in ROM, so add will fail in that case
+        if (elem != NULL) {
+            elem->value = value;
+            return true;
+        }
     }
+
+    return false;
 }
 
 const mp_obj_type_t mp_type_type = {
@@ -410,29 +414,25 @@ STATIC void super_load_attr(mp_obj_t self_in, qstr attr, mp_obj_t *dest) {
         mp_obj_t member = mp_obj_class_lookup((mp_obj_type_t*)items[i], attr);
         if (member != MP_OBJ_NULL) {
             // XXX this and the code in class_load_attr need to be factored out
-            if (mp_obj_is_callable(member)) {
-                // class member is callable so build a bound method
-                // check if the methods are functions, static or class methods
-                // see http://docs.python.org/3.3/howto/descriptor.html
-                // TODO check that this is the correct place to have this logic
-                if (MP_OBJ_IS_TYPE(member, &mp_type_staticmethod)) {
-                    // return just the function
-                    dest[0] = ((mp_obj_static_class_method_t*)member)->fun;
-                } else if (MP_OBJ_IS_TYPE(member, &mp_type_classmethod)) {
-                    // return a bound method, with self being the type of this object
-                    dest[0] = ((mp_obj_static_class_method_t*)member)->fun;
-                    dest[1] = mp_obj_get_type(self->obj);
-                } else {
-                    // return a bound method, with self being this object
-                    dest[0] = member;
-                    dest[1] = self->obj;
-                }
-                return;
+            // check if the methods are functions, static or class methods
+            // see http://docs.python.org/3.3/howto/descriptor.html
+            // TODO check that this is the correct place to have this logic
+            if (MP_OBJ_IS_TYPE(member, &mp_type_staticmethod)) {
+                // return just the function
+                dest[0] = ((mp_obj_static_class_method_t*)member)->fun;
+            } else if (MP_OBJ_IS_TYPE(member, &mp_type_classmethod)) {
+                // return a bound method, with self being the type of this object
+                dest[0] = ((mp_obj_static_class_method_t*)member)->fun;
+                dest[1] = mp_obj_get_type(self->obj);
+            } if (mp_obj_is_callable(member)) {
+                // return a bound method, with self being this object
+                dest[0] = member;
+                dest[1] = self->obj;
             } else {
                 // class member is a value, so just return that value
                 dest[0] = member;
-                return;
             }
+            return;
         }
     }
 }
@@ -454,16 +454,9 @@ mp_obj_t mp_obj_new_super(mp_obj_t type, mp_obj_t obj) {
 /******************************************************************************/
 // subclassing and built-ins specific to types
 
-bool mp_obj_is_subclass(mp_obj_t object, mp_obj_t classinfo) {
-    if (!MP_OBJ_IS_TYPE(object, &mp_type_type)) {
-        nlr_jump(mp_obj_new_exception_msg(&mp_type_TypeError, "issubclass() arg 1 must be a class"));
-    }
-
-    // TODO support a tuple of classes for second argument
-    if (!MP_OBJ_IS_TYPE(classinfo, &mp_type_type)) {
-        nlr_jump(mp_obj_new_exception_msg(&mp_type_TypeError, "issubclass() arg 2 must be a class"));
-    }
-
+// object and classinfo should be type objects
+// (but the function will fail gracefully if they are not)
+bool mp_obj_is_subclass_fast(mp_const_obj_t object, mp_const_obj_t classinfo) {
     for (;;) {
         if (object == classinfo) {
             return true;
@@ -471,22 +464,29 @@ bool mp_obj_is_subclass(mp_obj_t object, mp_obj_t classinfo) {
 
         // not equivalent classes, keep searching base classes
 
-        assert(MP_OBJ_IS_TYPE(object, &mp_type_type));
-        mp_obj_type_t *self = object;
+        // object should always be a type object, but just return false if it's not
+        if (!MP_OBJ_IS_TYPE(object, &mp_type_type)) {
+            return false;
+        }
+
+        const mp_obj_type_t *self = object;
 
         // for a const struct, this entry might be NULL
         if (self->bases_tuple == MP_OBJ_NULL) {
             return false;
         }
 
+        // get the base objects (they should be type objects)
         uint len;
         mp_obj_t *items;
         mp_obj_tuple_get(self->bases_tuple, &len, &items);
         if (len == 0) {
             return false;
         }
+
+        // iterate through the base objects
         for (uint i = 0; i < len - 1; i++) {
-            if (mp_obj_is_subclass(items[i], classinfo)) {
+            if (mp_obj_is_subclass_fast(items[i], classinfo)) {
                 return true;
             }
         }
@@ -496,14 +496,37 @@ bool mp_obj_is_subclass(mp_obj_t object, mp_obj_t classinfo) {
     }
 }
 
+STATIC mp_obj_t mp_obj_is_subclass(mp_obj_t object, mp_obj_t classinfo) {
+    uint len;
+    mp_obj_t *items;
+    if (MP_OBJ_IS_TYPE(classinfo, &mp_type_type)) {
+        len = 1;
+        items = &classinfo;
+    } else if (MP_OBJ_IS_TYPE(classinfo, &tuple_type)) {
+        mp_obj_tuple_get(classinfo, &len, &items);
+    } else {
+        nlr_jump(mp_obj_new_exception_msg(&mp_type_TypeError, "issubclass() arg 2 must be a class or a tuple of classes"));
+    }
+
+    for (uint i = 0; i < len; i++) {
+        if (mp_obj_is_subclass_fast(object, items[i])) {
+            return mp_const_true;
+        }
+    }
+    return mp_const_false;
+}
+
 STATIC mp_obj_t mp_builtin_issubclass(mp_obj_t object, mp_obj_t classinfo) {
-    return MP_BOOL(mp_obj_is_subclass(object, classinfo));
+    if (!MP_OBJ_IS_TYPE(object, &mp_type_type)) {
+        nlr_jump(mp_obj_new_exception_msg(&mp_type_TypeError, "issubclass() arg 1 must be a class"));
+    }
+    return mp_obj_is_subclass(object, classinfo);
 }
 
 MP_DEFINE_CONST_FUN_OBJ_2(mp_builtin_issubclass_obj, mp_builtin_issubclass);
 
 STATIC mp_obj_t mp_builtin_isinstance(mp_obj_t object, mp_obj_t classinfo) {
-    return MP_BOOL(mp_obj_is_subclass(mp_obj_get_type(object), classinfo));
+    return mp_obj_is_subclass(mp_obj_get_type(object), classinfo);
 }
 
 MP_DEFINE_CONST_FUN_OBJ_2(mp_builtin_isinstance_obj, mp_builtin_isinstance);

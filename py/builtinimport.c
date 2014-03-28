@@ -1,7 +1,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <stdarg.h>
 #include <string.h>
 #include <assert.h>
 
@@ -13,6 +12,7 @@
 #include "lexerunix.h"
 #include "parse.h"
 #include "obj.h"
+#include "objmodule.h"
 #include "parsehelper.h"
 #include "compile.h"
 #include "runtime0.h"
@@ -129,7 +129,7 @@ void do_load(mp_obj_t module_obj, vstr_t *file) {
     rt_globals_set(old_globals);
 }
 
-mp_obj_t mp_builtin___import__(int n_args, mp_obj_t *args) {
+mp_obj_t mp_builtin___import__(uint n_args, mp_obj_t *args) {
     /*
     printf("import:\n");
     for (int i = 0; i < n_args; i++) {
@@ -140,15 +140,24 @@ mp_obj_t mp_builtin___import__(int n_args, mp_obj_t *args) {
     */
 
     mp_obj_t fromtuple = mp_const_none;
+    int level = 0;
     if (n_args >= 4) {
         fromtuple = args[3];
+        if (n_args >= 5) {
+            level = MP_OBJ_SMALL_INT_VALUE(args[4]);
+        }
+    }
+
+    if (level != 0) {
+        nlr_jump(mp_obj_new_exception_msg(&mp_type_NotImplementedError,
+            "Relative import is not implemented"));
     }
 
     uint mod_len;
     const char *mod_str = (const char*)mp_obj_str_get_data(args[0], &mod_len);
 
     // check if module already exists
-    mp_obj_t module_obj = mp_obj_module_get(mp_obj_str_get_qstr(args[0]));
+    mp_obj_t module_obj = mp_module_get(mp_obj_str_get_qstr(args[0]));
     if (module_obj != MP_OBJ_NULL) {
         // If it's not a package, return module right away
         char *p = strchr(mod_str, '.');
@@ -161,7 +170,7 @@ mp_obj_t mp_builtin___import__(int n_args, mp_obj_t *args) {
         }
         // Otherwise, we need to return top-level package
         qstr pkg_name = qstr_from_strn(mod_str, p - mod_str);
-        return mp_obj_module_get(pkg_name);
+        return mp_module_get(pkg_name);
     }
 
     uint last = 0;
@@ -192,7 +201,7 @@ mp_obj_t mp_builtin___import__(int n_args, mp_obj_t *args) {
                 nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_ImportError, "ImportError: No module named '%s'", qstr_str(mod_name)));
             }
 
-            module_obj = mp_obj_module_get(mod_name);
+            module_obj = mp_module_get(mod_name);
             if (module_obj == MP_OBJ_NULL) {
                 // module not already loaded, so load it!
 
@@ -202,13 +211,13 @@ mp_obj_t mp_builtin___import__(int n_args, mp_obj_t *args) {
                     vstr_add_char(&path, PATH_SEP_CHAR);
                     vstr_add_str(&path, "__init__.py");
                     if (mp_import_stat(vstr_str(&path)) != MP_IMPORT_STAT_FILE) {
-                        vstr_cut_tail(&path, sizeof("/__init__.py") - 1); // cut off /__init__.py
+                        vstr_cut_tail_bytes(&path, sizeof("/__init__.py") - 1); // cut off /__init__.py
                         nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_ImportError,
                             "Per PEP-420 a dir without __init__.py (%s) is a namespace package; "
                             "namespace packages are not supported", vstr_str(&path)));
                     }
                     do_load(module_obj, &path);
-                    vstr_cut_tail(&path, sizeof("/__init__.py") - 1); // cut off /__init__.py
+                    vstr_cut_tail_bytes(&path, sizeof("/__init__.py") - 1); // cut off /__init__.py
                 } else { // MP_IMPORT_STAT_FILE
                     do_load(module_obj, &path);
                     // TODO: We cannot just break here, at the very least, we must execute

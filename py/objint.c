@@ -1,6 +1,4 @@
-#include <stdlib.h>
 #include <stdint.h>
-#include <string.h>
 #include <assert.h>
 
 #include "nlr.h"
@@ -8,6 +6,8 @@
 #include "mpconfig.h"
 #include "qstr.h"
 #include "obj.h"
+#include "parsenum.h"
+#include "mpz.h"
 #include "objint.h"
 
 // This dispatcher function is expected to be independent of the implementation
@@ -24,7 +24,7 @@ STATIC mp_obj_t int_make_new(mp_obj_t type_in, uint n_args, uint n_kw, const mp_
                 // a string, parse it
                 uint l;
                 const char *s = mp_obj_str_get_data(args[0], &l);
-                return MP_OBJ_NEW_SMALL_INT(strtonum(s, 0));
+                return mp_parse_num_integer(s, l, 0);
             } else {
                 return MP_OBJ_NEW_SMALL_INT(mp_obj_get_int(args[0]));
             }
@@ -35,7 +35,7 @@ STATIC mp_obj_t int_make_new(mp_obj_t type_in, uint n_args, uint n_kw, const mp_
             // TODO proper error checking of argument types
             uint l;
             const char *s = mp_obj_str_get_data(args[0], &l);
-            return MP_OBJ_NEW_SMALL_INT(strtonum(s, mp_obj_get_int(args[1])));
+            return mp_parse_num_integer(s, l, mp_obj_get_int(args[1]));
         }
 
         default:
@@ -47,7 +47,7 @@ STATIC mp_obj_t int_make_new(mp_obj_t type_in, uint n_args, uint n_kw, const mp_
 
 void int_print(void (*print)(void *env, const char *fmt, ...), void *env, mp_obj_t self_in, mp_print_kind_t kind) {
     if (MP_OBJ_IS_SMALL_INT(self_in)) {
-        print(env, "%d", (int)MP_OBJ_SMALL_INT_VALUE(self_in));
+        print(env, INT_FMT, MP_OBJ_SMALL_INT_VALUE(self_in));
     }
 }
 
@@ -66,6 +66,12 @@ mp_obj_t int_binary_op(int op, mp_obj_t lhs_in, mp_obj_t rhs_in) {
 // This is called only with strings whose value doesn't fit in SMALL_INT
 mp_obj_t mp_obj_new_int_from_long_str(const char *s) {
     nlr_jump(mp_obj_new_exception_msg(&mp_type_OverflowError, "long int not supported in this build"));
+    return mp_const_none;
+}
+
+// This is called when an integer larger than a SMALL_INT is needed (although val might still fit in a SMALL_INT)
+mp_obj_t mp_obj_new_int_from_ll(long long val) {
+    nlr_jump(mp_obj_new_exception_msg(&mp_type_OverflowError, "small int overflow"));
     return mp_const_none;
 }
 
@@ -94,6 +100,12 @@ machine_int_t mp_obj_int_get(mp_obj_t self_in) {
 machine_int_t mp_obj_int_get_checked(mp_obj_t self_in) {
     return MP_OBJ_SMALL_INT_VALUE(self_in);
 }
+
+#if MICROPY_ENABLE_FLOAT
+mp_float_t mp_obj_int_as_float(mp_obj_t self_in) {
+    return MP_OBJ_SMALL_INT_VALUE(self_in);
+}
+#endif
 
 #endif // MICROPY_LONGINT_IMPL == MICROPY_LONGINT_IMPL_NONE
 

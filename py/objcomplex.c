@@ -1,6 +1,4 @@
 #include <stdlib.h>
-#include <stdint.h>
-#include <string.h>
 #include <assert.h>
 
 #include "nlr.h"
@@ -8,10 +6,15 @@
 #include "mpconfig.h"
 #include "qstr.h"
 #include "obj.h"
+#include "parsenum.h"
 #include "runtime0.h"
 #include "map.h"
 
 #if MICROPY_ENABLE_FLOAT
+
+#if MICROPY_FLOAT_IMPL == MICROPY_FLOAT_IMPL_FLOAT
+#include "formatfloat.h"
+#endif
 
 typedef struct _mp_obj_complex_t {
     mp_obj_base_t base;
@@ -23,11 +26,24 @@ mp_obj_t mp_obj_new_complex(mp_float_t real, mp_float_t imag);
 
 STATIC void complex_print(void (*print)(void *env, const char *fmt, ...), void *env, mp_obj_t o_in, mp_print_kind_t kind) {
     mp_obj_complex_t *o = o_in;
+#if MICROPY_FLOAT_IMPL == MICROPY_FLOAT_IMPL_FLOAT
+    char buf[32];
+    if (o->real == 0) {
+        format_float(o->imag, buf, sizeof(buf), 'g', 6, '\0');
+        print(env, "%s", buf);
+    } else {
+        format_float(o->real, buf, sizeof(buf), 'g', 6, '\0');
+        print(env, "(%s+", buf);
+        format_float(o->imag, buf, sizeof(buf), 'g', 6, '\0');
+        print(env, "%sj)", buf);
+    }
+#else
     if (o->real == 0) {
         print(env, "%.8gj",  (double) o->imag);
     } else {
         print(env, "(%.8g+%.8gj)", (double) o->real, (double) o->imag);
     }
+#endif
 }
 
 STATIC mp_obj_t complex_make_new(mp_obj_t type_in, uint n_args, uint n_kw, const mp_obj_t *args) {
@@ -38,23 +54,28 @@ STATIC mp_obj_t complex_make_new(mp_obj_t type_in, uint n_args, uint n_kw, const
             return mp_obj_new_complex(0, 0);
 
         case 1:
-            // TODO allow string as first arg and parse it
-            if (MP_OBJ_IS_TYPE(args[0], &complex_type)) {
+            if (MP_OBJ_IS_STR(args[0])) {
+                // a string, parse it
+                uint l;
+                const char *s = mp_obj_str_get_data(args[0], &l);
+                return mp_parse_num_decimal(s, l, true, true);
+            } else if (MP_OBJ_IS_TYPE(args[0], &mp_type_complex)) {
+                // a complex, just return it
                 return args[0];
             } else {
+                // something else, try to cast it to a complex
                 return mp_obj_new_complex(mp_obj_get_float(args[0]), 0);
             }
 
-        case 2:
-        {
+        case 2: {
             mp_float_t real, imag;
-            if (MP_OBJ_IS_TYPE(args[0], &complex_type)) {
+            if (MP_OBJ_IS_TYPE(args[0], &mp_type_complex)) {
                 mp_obj_complex_get(args[0], &real, &imag);
             } else {
                 real = mp_obj_get_float(args[0]);
                 imag = 0;
             }
-            if (MP_OBJ_IS_TYPE(args[1], &complex_type)) {
+            if (MP_OBJ_IS_TYPE(args[1], &mp_type_complex)) {
                 mp_float_t real2, imag2;
                 mp_obj_complex_get(args[1], &real2, &imag2);
                 real -= imag2;
@@ -85,7 +106,7 @@ STATIC mp_obj_t complex_binary_op(int op, mp_obj_t lhs_in, mp_obj_t rhs_in) {
     return mp_obj_complex_binary_op(op, lhs->real, lhs->imag, rhs_in);
 }
 
-const mp_obj_type_t complex_type = {
+const mp_obj_type_t mp_type_complex = {
     { &mp_type_type },
     .name = MP_QSTR_complex,
     .print = complex_print,
@@ -96,14 +117,14 @@ const mp_obj_type_t complex_type = {
 
 mp_obj_t mp_obj_new_complex(mp_float_t real, mp_float_t imag) {
     mp_obj_complex_t *o = m_new_obj(mp_obj_complex_t);
-    o->base.type = &complex_type;
+    o->base.type = &mp_type_complex;
     o->real = real;
     o->imag = imag;
     return o;
 }
 
 void mp_obj_complex_get(mp_obj_t self_in, mp_float_t *real, mp_float_t *imag) {
-    assert(MP_OBJ_IS_TYPE(self_in, &complex_type));
+    assert(MP_OBJ_IS_TYPE(self_in, &mp_type_complex));
     mp_obj_complex_t *self = self_in;
     *real = self->real;
     *imag = self->imag;

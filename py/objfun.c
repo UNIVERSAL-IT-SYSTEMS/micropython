@@ -1,5 +1,5 @@
+#include <stdbool.h>
 #include <stdlib.h>
-#include <stdint.h>
 #include <string.h>
 #include <assert.h>
 
@@ -17,7 +17,7 @@
 #if 0 // print debugging info
 #define DEBUG_PRINT (1)
 #else // don't print debugging info
-#define DEBUG_printf(args...) (void)0
+#define DEBUG_printf(...) (void)0
 #endif
 
 /******************************************************************************/
@@ -121,7 +121,7 @@ mp_obj_t rt_make_function_var(int n_args_min, mp_fun_var_t fun) {
     o->base.type = &fun_native_type;
     o->is_kw = false;
     o->n_args_min = n_args_min;
-    o->n_args_max = ~((machine_uint_t)0);
+    o->n_args_max = MP_OBJ_FUN_ARGS_MAX;
     o->fun = fun;
     return o;
 }
@@ -143,13 +143,10 @@ mp_obj_t rt_make_function_var_between(int n_args_min, int n_args_max, mp_fun_var
 typedef struct _mp_obj_fun_bc_t {
     mp_obj_base_t base;
     mp_map_t *globals;      // the context within which this function was defined
-    struct {
-        machine_uint_t n_args : 15;         // number of arguments this function takes
-        machine_uint_t n_def_args : 15;     // number of default arguments
-        machine_uint_t takes_var_args : 1;  // set if this function takes variable args
-        machine_uint_t takes_kw_args : 1;   // set if this function takes keyword args
-    };
-    uint n_state;           // total state size for the executing function (incl args, locals, stack)
+    machine_uint_t n_args : 15;         // number of arguments this function takes
+    machine_uint_t n_def_args : 15;     // number of default arguments
+    machine_uint_t takes_var_args : 1;  // set if this function takes variable args
+    machine_uint_t takes_kw_args : 1;   // set if this function takes keyword args
     const byte *bytecode;   // bytecode for the function
     qstr *args;             // argument names (needed to resolve positional args passed as keywords)
     mp_obj_t extra_args[];  // values of default args (if any), plus a slot at the end for var args and/or kw args (if it takes them)
@@ -251,7 +248,7 @@ continue2:;
         mp_obj_t *d = &flat_args[self->n_args - 1];
         mp_obj_t *s = &self->extra_args[self->n_def_args - 1];
         for (int i = self->n_def_args; i > 0; i--) {
-            if (*d != MP_OBJ_NULL) {
+            if (*d == MP_OBJ_NULL) {
                 *d-- = *s--;
             }
         }
@@ -287,7 +284,7 @@ continue2:;
     DEBUG_printf("Calling: args=%p, n_args=%d, extra_args=%p, n_extra_args=%d\n", args, n_args, extra_args, n_extra_args);
     dump_args(args, n_args);
     dump_args(extra_args, n_extra_args);
-    mp_vm_return_kind_t vm_return_kind = mp_execute_byte_code(self->bytecode, args, n_args, extra_args, n_extra_args, self->n_state, &result);
+    mp_vm_return_kind_t vm_return_kind = mp_execute_byte_code(self->bytecode, args, n_args, extra_args, n_extra_args, &result);
     rt_globals_set(old_globals);
 
     if (vm_return_kind == MP_VM_RETURN_NORMAL) {
@@ -306,7 +303,7 @@ const mp_obj_type_t fun_bc_type = {
     .call = fun_bc_call,
 };
 
-mp_obj_t mp_obj_new_fun_bc(uint scope_flags, qstr *args, uint n_args, mp_obj_t def_args_in, uint n_state, const byte *code) {
+mp_obj_t mp_obj_new_fun_bc(uint scope_flags, qstr *args, uint n_args, mp_obj_t def_args_in, const byte *code) {
     uint n_def_args = 0;
     uint n_extra_args = 0;
     mp_obj_tuple_t *def_args = def_args_in;
@@ -328,7 +325,6 @@ mp_obj_t mp_obj_new_fun_bc(uint scope_flags, qstr *args, uint n_args, mp_obj_t d
     o->n_def_args = n_def_args;
     o->takes_var_args = (scope_flags & MP_SCOPE_FLAG_VARARGS) != 0;
     o->takes_kw_args = (scope_flags & MP_SCOPE_FLAG_VARKEYWORDS) != 0;
-    o->n_state = n_state;
     o->bytecode = code;
     if (def_args != MP_OBJ_NULL) {
         memcpy(o->extra_args, def_args->items, n_def_args * sizeof(mp_obj_t));
@@ -336,11 +332,10 @@ mp_obj_t mp_obj_new_fun_bc(uint scope_flags, qstr *args, uint n_args, mp_obj_t d
     return o;
 }
 
-void mp_obj_fun_bc_get(mp_obj_t self_in, int *n_args, uint *n_state, const byte **code) {
+void mp_obj_fun_bc_get(mp_obj_t self_in, int *n_args, const byte **code) {
     assert(MP_OBJ_IS_TYPE(self_in, &fun_bc_type));
     mp_obj_fun_bc_t *self = self_in;
     *n_args = self->n_args;
-    *n_state = self->n_state;
     *code = self->bytecode;
 }
 
@@ -374,7 +369,7 @@ STATIC machine_uint_t convert_obj_for_inline_asm(mp_obj_t obj) {
         uint l;
         return (machine_uint_t)mp_obj_str_get_data(obj, &l);
 #if MICROPY_ENABLE_FLOAT
-    } else if (MP_OBJ_IS_TYPE(obj, &float_type)) {
+    } else if (MP_OBJ_IS_TYPE(obj, &mp_type_float)) {
         // convert float to int (could also pass in float registers)
         return (machine_int_t)mp_obj_float_get(obj);
 #endif

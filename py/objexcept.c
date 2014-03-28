@@ -1,5 +1,3 @@
-#include <stdlib.h>
-#include <stdint.h>
 #include <string.h>
 #include <stdarg.h>
 #include <assert.h>
@@ -10,6 +8,8 @@
 #include "qstr.h"
 #include "obj.h"
 #include "objtuple.h"
+#include "runtime.h"
+#include "runtime0.h"
 
 // This is unified class for C-level and Python-level exceptions
 // Python-level exceptions have empty ->msg and all arguments are in
@@ -48,16 +48,36 @@ STATIC mp_obj_t mp_obj_exception_make_new(mp_obj_t type_in, uint n_args, uint n_
     mp_obj_type_t *type = type_in;
 
     if (n_kw != 0) {
-        nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_TypeError, "%s does not take keyword arguments", type->name));
+        nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_TypeError, "%s does not take keyword arguments", mp_obj_get_type_str(type_in)));
     }
 
     mp_obj_exception_t *o = m_new_obj_var(mp_obj_exception_t, mp_obj_t, n_args);
     o->base.type = type;
     o->traceback = MP_OBJ_NULL;
     o->msg = NULL;
+    o->args.base.type = &tuple_type;
     o->args.len = n_args;
     memcpy(o->args.items, args, n_args * sizeof(mp_obj_t));
     return o;
+}
+
+// Get exception "value" - that is, first argument, or None
+mp_obj_t mp_obj_exception_get_value(mp_obj_t self_in) {
+    mp_obj_exception_t *self = self_in;
+    if (self->args.len == 0) {
+        return mp_const_none;
+    } else {
+        return self->args.items[0];
+    }
+}
+
+STATIC void exception_load_attr(mp_obj_t self_in, qstr attr, mp_obj_t *dest) {
+    mp_obj_exception_t *self = self_in;
+    if (attr == MP_QSTR_args) {
+        dest[0] = &self->args;
+    } else if (self->base.type == &mp_type_StopIteration && attr == MP_QSTR_value) {
+        dest[0] = mp_obj_exception_get_value(self);
+    }
 }
 
 const mp_obj_type_t mp_type_BaseException = {
@@ -65,6 +85,7 @@ const mp_obj_type_t mp_type_BaseException = {
     .name = MP_QSTR_BaseException,
     .print = mp_obj_exception_print,
     .make_new = mp_obj_exception_make_new,
+    .load_attr = exception_load_attr,
 };
 
 #define MP_DEFINE_EXCEPTION_BASE(base_name) \
@@ -76,28 +97,95 @@ const mp_obj_type_t mp_type_ ## exc_name = { \
     .name = MP_QSTR_ ## exc_name, \
     .print = mp_obj_exception_print, \
     .make_new = mp_obj_exception_make_new, \
+    .load_attr = exception_load_attr, \
     .bases_tuple = (mp_obj_t)&mp_type_ ## base_name ## _base_tuple, \
 };
 
+// List of all exceptions, arranged as in the table at:
+// http://docs.python.org/3.3/library/exceptions.html
 MP_DEFINE_EXCEPTION_BASE(BaseException)
-
-MP_DEFINE_EXCEPTION(AssertionError, BaseException)
-MP_DEFINE_EXCEPTION(AttributeError, BaseException)
-MP_DEFINE_EXCEPTION(ImportError, BaseException)
-MP_DEFINE_EXCEPTION(IndentationError, BaseException)
-MP_DEFINE_EXCEPTION(IndexError, BaseException)
-MP_DEFINE_EXCEPTION(KeyError, BaseException)
-MP_DEFINE_EXCEPTION(NameError, BaseException)
-MP_DEFINE_EXCEPTION(SyntaxError, BaseException)
-MP_DEFINE_EXCEPTION(TypeError, BaseException)
-MP_DEFINE_EXCEPTION(ValueError, BaseException)
-MP_DEFINE_EXCEPTION(OverflowError, BaseException)
-MP_DEFINE_EXCEPTION(OSError, BaseException)
-MP_DEFINE_EXCEPTION(NotImplementedError, BaseException)
-MP_DEFINE_EXCEPTION(StopIteration, BaseException)
+//MP_DEFINE_EXCEPTION(SystemExit, BaseException)
+//MP_DEFINE_EXCEPTION(KeyboardInterrupt, BaseException)
+MP_DEFINE_EXCEPTION(GeneratorExit, BaseException)
+MP_DEFINE_EXCEPTION(Exception, BaseException)
+  MP_DEFINE_EXCEPTION_BASE(Exception)
+  MP_DEFINE_EXCEPTION(StopIteration, Exception)
+  MP_DEFINE_EXCEPTION(ArithmeticError, Exception)
+    MP_DEFINE_EXCEPTION_BASE(ArithmeticError)
+    //MP_DEFINE_EXCEPTION(FloatingPointError, ArithmeticError)
+    MP_DEFINE_EXCEPTION(OverflowError, ArithmeticError)
+    MP_DEFINE_EXCEPTION(ZeroDivisionError, ArithmeticError)
+  MP_DEFINE_EXCEPTION(AssertionError, Exception)
+  MP_DEFINE_EXCEPTION(AttributeError, Exception)
+  //MP_DEFINE_EXCEPTION(BufferError, Exception)
+  //MP_DEFINE_EXCEPTION(EnvironmentError, Exception)
+  MP_DEFINE_EXCEPTION(EOFError, Exception)
+  MP_DEFINE_EXCEPTION(ImportError, Exception)
+  MP_DEFINE_EXCEPTION(IOError, Exception)
+  MP_DEFINE_EXCEPTION(LookupError, Exception)
+    MP_DEFINE_EXCEPTION_BASE(LookupError)
+    MP_DEFINE_EXCEPTION(IndexError, LookupError)
+    MP_DEFINE_EXCEPTION(KeyError, LookupError)
+  MP_DEFINE_EXCEPTION(MemoryError, Exception)
+  MP_DEFINE_EXCEPTION(NameError, Exception)
+    MP_DEFINE_EXCEPTION_BASE(NameError)
+    //MP_DEFINE_EXCEPTION(UnboundLocalError, NameError)
+  MP_DEFINE_EXCEPTION(OSError, Exception)
+    MP_DEFINE_EXCEPTION_BASE(OSError)
+    /*
+    MP_DEFINE_EXCEPTION(BlockingIOError, OSError)
+    MP_DEFINE_EXCEPTION(ChildProcessError, OSError)
+    MP_DEFINE_EXCEPTION(ConnectionError, OSError)
+      MP_DEFINE_EXCEPTION(BrokenPipeError, ConnectionError)
+      MP_DEFINE_EXCEPTION(ConnectionAbortedError, ConnectionError)
+      MP_DEFINE_EXCEPTION(ConnectionRefusedError, ConnectionError)
+      MP_DEFINE_EXCEPTION(ConnectionResetError, ConnectionError)
+    MP_DEFINE_EXCEPTION(InterruptedError, OSError)
+    MP_DEFINE_EXCEPTION(IsADirectoryError, OSError)
+    MP_DEFINE_EXCEPTION(NotADirectoryError, OSError)
+    MP_DEFINE_EXCEPTION(PermissionError, OSError)
+    MP_DEFINE_EXCEPTION(ProcessLookupError, OSError)
+    MP_DEFINE_EXCEPTION(TimeoutError, OSError)
+    MP_DEFINE_EXCEPTION(FileExistsError, OSError)
+    MP_DEFINE_EXCEPTION(FileNotFoundError, OSError)
+    MP_DEFINE_EXCEPTION(ReferenceError, Exception)
+    */
+  MP_DEFINE_EXCEPTION(RuntimeError, Exception)
+    MP_DEFINE_EXCEPTION_BASE(RuntimeError)
+    MP_DEFINE_EXCEPTION(NotImplementedError, RuntimeError)
+  MP_DEFINE_EXCEPTION(SyntaxError, Exception)
+    MP_DEFINE_EXCEPTION_BASE(SyntaxError)
+    MP_DEFINE_EXCEPTION(IndentationError, SyntaxError)
+    /*
+      MP_DEFINE_EXCEPTION_BASE(IndentationError)
+      MP_DEFINE_EXCEPTION(TabError, IndentationError)
+      */
+  MP_DEFINE_EXCEPTION(SystemError, Exception)
+  MP_DEFINE_EXCEPTION(TypeError, Exception)
+  MP_DEFINE_EXCEPTION(ValueError, Exception)
+    //TODO: Implement UnicodeErrors which take arguments
+  /*
+  MP_DEFINE_EXCEPTION(Warning, Exception)
+    MP_DEFINE_EXCEPTION_BASE(Warning)
+    MP_DEFINE_EXCEPTION(DeprecationWarning, Warning)
+    MP_DEFINE_EXCEPTION(PendingDeprecationWarning, Warning)
+    MP_DEFINE_EXCEPTION(RuntimeWarning, Warning)
+    MP_DEFINE_EXCEPTION(SyntaxWarning, Warning)
+    MP_DEFINE_EXCEPTION(UserWarning, Warning)
+    MP_DEFINE_EXCEPTION(FutureWarning, Warning)
+    MP_DEFINE_EXCEPTION(ImportWarning, Warning)
+    MP_DEFINE_EXCEPTION(UnicodeWarning, Warning)
+    MP_DEFINE_EXCEPTION(BytesWarning, Warning)
+    MP_DEFINE_EXCEPTION(ResourceWarning, Warning)
+    */
 
 mp_obj_t mp_obj_new_exception(const mp_obj_type_t *exc_type) {
     return mp_obj_new_exception_msg_varg(exc_type, NULL);
+}
+
+mp_obj_t mp_obj_new_exception_args(const mp_obj_type_t *exc_type, uint n_args, const mp_obj_t *args) {
+    assert(exc_type->make_new == mp_obj_exception_make_new);
+    return exc_type->make_new((mp_obj_t)exc_type, n_args, 0, args);
 }
 
 mp_obj_t mp_obj_new_exception_msg(const mp_obj_type_t *exc_type, const char *msg) {
@@ -130,44 +218,55 @@ mp_obj_t mp_obj_new_exception_msg_varg(const mp_obj_type_t *exc_type, const char
 }
 
 // return true if the given object is an exception type
-// TODO make this work for user defined exceptions
 bool mp_obj_is_exception_type(mp_obj_t self_in) {
     if (MP_OBJ_IS_TYPE(self_in, &mp_type_type)) {
+        // optimisation when self_in is a builtin exception
         mp_obj_type_t *self = self_in;
-        return self->make_new == mp_obj_exception_make_new;
-    } else {
-        return false;
+        if (self->make_new == mp_obj_exception_make_new) {
+            return true;
+        }
     }
+    return mp_obj_is_subclass_fast(self_in, &mp_type_BaseException);
 }
 
 // return true if the given object is an instance of an exception type
-// TODO make this work for user defined exceptions
 bool mp_obj_is_exception_instance(mp_obj_t self_in) {
-    return mp_obj_get_type(self_in)->make_new == mp_obj_exception_make_new;
+    return mp_obj_is_exception_type(mp_obj_get_type(self_in));
+}
+
+// return true if exception (type or instance) is a subclass of given
+// exception type.
+bool mp_obj_exception_match(mp_obj_t exc, const mp_obj_type_t *exc_type) {
+    // TODO: move implementation from RT_BINARY_OP_EXCEPTION_MATCH here.
+    return rt_binary_op(RT_BINARY_OP_EXCEPTION_MATCH, exc, (mp_obj_t)exc_type) == mp_const_true;
 }
 
 void mp_obj_exception_clear_traceback(mp_obj_t self_in) {
     // make sure self_in is an exception instance
-    assert(mp_obj_get_type(self_in)->make_new == mp_obj_exception_make_new);
-    mp_obj_exception_t *self = self_in;
+    // TODO add traceback information to user-defined exceptions (need proper builtin subclassing for that)
+    if (mp_obj_get_type(self_in)->make_new == mp_obj_exception_make_new) {
+        mp_obj_exception_t *self = self_in;
 
-    // just set the traceback to the null object
-    // we don't want to call any memory management functions here
-    self->traceback = MP_OBJ_NULL;
+        // just set the traceback to the null object
+        // we don't want to call any memory management functions here
+        self->traceback = MP_OBJ_NULL;
+    }
 }
 
 void mp_obj_exception_add_traceback(mp_obj_t self_in, qstr file, machine_uint_t line, qstr block) {
     // make sure self_in is an exception instance
-    assert(mp_obj_get_type(self_in)->make_new == mp_obj_exception_make_new);
-    mp_obj_exception_t *self = self_in;
+    // TODO add traceback information to user-defined exceptions (need proper builtin subclassing for that)
+    if (mp_obj_get_type(self_in)->make_new == mp_obj_exception_make_new) {
+        mp_obj_exception_t *self = self_in;
 
-    // for traceback, we are just using the list object for convenience, it's not really a list of Python objects
-    if (self->traceback == MP_OBJ_NULL) {
-        self->traceback = mp_obj_new_list(0, NULL);
+        // for traceback, we are just using the list object for convenience, it's not really a list of Python objects
+        if (self->traceback == MP_OBJ_NULL) {
+            self->traceback = mp_obj_new_list(0, NULL);
+        }
+        mp_obj_list_append(self->traceback, (mp_obj_t)(machine_uint_t)file);
+        mp_obj_list_append(self->traceback, (mp_obj_t)(machine_uint_t)line);
+        mp_obj_list_append(self->traceback, (mp_obj_t)(machine_uint_t)block);
     }
-    mp_obj_list_append(self->traceback, (mp_obj_t)(machine_uint_t)file);
-    mp_obj_list_append(self->traceback, (mp_obj_t)(machine_uint_t)line);
-    mp_obj_list_append(self->traceback, (mp_obj_t)(machine_uint_t)block);
 }
 
 void mp_obj_exception_get_traceback(mp_obj_t self_in, machine_uint_t *n, machine_uint_t **values) {

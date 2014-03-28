@@ -1,7 +1,4 @@
-#include <stdlib.h>
-#include <stdint.h>
 #include <string.h>
-#include <stdarg.h>
 #include <assert.h>
 
 #include "nlr.h"
@@ -16,12 +13,10 @@
 
 typedef struct _mp_obj_array_t {
     mp_obj_base_t base;
-    struct {
-        machine_uint_t typecode : 8;
-        // free is number of unused elements after len used elements
-        // alloc size = len + free
-        machine_uint_t free : (8 * sizeof(machine_uint_t) - 8);
-    };
+    machine_uint_t typecode : 8;
+    // free is number of unused elements after len used elements
+    // alloc size = len + free
+    machine_uint_t free : (8 * sizeof(machine_uint_t) - 8);
     machine_uint_t len; // in elements
     void *items;
 } mp_obj_array_t;
@@ -69,7 +64,7 @@ STATIC mp_obj_t array_construct(char typecode, mp_obj_t initializer) {
     mp_obj_t iterable = rt_getiter(initializer);
     mp_obj_t item;
     int i = 0;
-    while ((item = rt_iternext(iterable)) != mp_const_stop_iteration) {
+    while ((item = rt_iternext(iterable)) != MP_OBJ_NULL) {
         if (len == 0) {
             array_append(array, item);
         } else {
@@ -115,7 +110,7 @@ STATIC mp_obj_t array_binary_op(int op, mp_obj_t lhs, mp_obj_t rhs) {
     switch (op) {
         case RT_BINARY_OP_SUBSCR:
         {
-            uint index = mp_get_index(o->base.type, o->len, rhs);
+            uint index = mp_get_index(o->base.type, o->len, rhs, false);
             return mp_binary_get_val(o->typecode, o->items, index);
         }
 
@@ -126,7 +121,7 @@ STATIC mp_obj_t array_binary_op(int op, mp_obj_t lhs, mp_obj_t rhs) {
 }
 
 STATIC mp_obj_t array_append(mp_obj_t self_in, mp_obj_t arg) {
-    assert(MP_OBJ_IS_TYPE(self_in, &array_type));
+    assert(MP_OBJ_IS_TYPE(self_in, &mp_type_array));
     mp_obj_array_t *self = self_in;
     if (self->free == 0) {
         int item_sz = mp_binary_get_size(self->typecode);
@@ -142,7 +137,7 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_2(array_append_obj, array_append);
 
 STATIC bool array_store_item(mp_obj_t self_in, mp_obj_t index_in, mp_obj_t value) {
     mp_obj_array_t *o = self_in;
-    uint index = mp_get_index(o->base.type, o->len, index_in);
+    uint index = mp_get_index(o->base.type, o->len, index_in, false);
     mp_binary_set_val(o->typecode, o->items, index, value);
     return true;
 }
@@ -154,12 +149,13 @@ STATIC machine_int_t array_get_buffer(mp_obj_t o_in, buffer_info_t *bufinfo, int
     return 0;
 }
 
-STATIC const mp_method_t array_type_methods[] = {
-    { "append", &array_append_obj },
-    { NULL, NULL },
+STATIC const mp_map_elem_t array_locals_dict_table[] = {
+    { MP_OBJ_NEW_QSTR(MP_QSTR_append), (mp_obj_t)&array_append_obj },
 };
 
-const mp_obj_type_t array_type = {
+STATIC MP_DEFINE_CONST_DICT(array_locals_dict, array_locals_dict_table);
+
+const mp_obj_type_t mp_type_array = {
     { &mp_type_type },
     .name = MP_QSTR_array,
     .print = array_print,
@@ -168,13 +164,13 @@ const mp_obj_type_t array_type = {
     .unary_op = array_unary_op,
     .binary_op = array_binary_op,
     .store_item = array_store_item,
-    .methods = array_type_methods,
     .buffer_p = { .get_buffer = array_get_buffer },
+    .locals_dict = (mp_obj_t)&array_locals_dict,
 };
 
 STATIC mp_obj_array_t *array_new(char typecode, uint n) {
     mp_obj_array_t *o = m_new_obj(mp_obj_array_t);
-    o->base.type = &array_type;
+    o->base.type = &mp_type_array;
     o->typecode = typecode;
     o->free = 0;
     o->len = n;
@@ -195,7 +191,7 @@ mp_obj_t mp_obj_new_bytearray(uint n, void *items) {
 // Create bytearray which references specified memory area
 mp_obj_t mp_obj_new_bytearray_by_ref(uint n, void *items) {
     mp_obj_array_t *o = m_new_obj(mp_obj_array_t);
-    o->base.type = &array_type;
+    o->base.type = &mp_type_array;
     o->typecode = BYTEARRAY_TYPECODE;
     o->free = 0;
     o->len = n;
@@ -212,12 +208,12 @@ typedef struct _mp_obj_array_it_t {
     machine_uint_t cur;
 } mp_obj_array_it_t;
 
-mp_obj_t array_it_iternext(mp_obj_t self_in) {
+STATIC mp_obj_t array_it_iternext(mp_obj_t self_in) {
     mp_obj_array_it_t *self = self_in;
     if (self->cur < self->array->len) {
         return mp_binary_get_val(self->array->typecode, self->array->items, self->cur++);
     } else {
-        return mp_const_stop_iteration;
+        return MP_OBJ_NULL;
     }
 }
 
@@ -227,7 +223,7 @@ STATIC const mp_obj_type_t array_it_type = {
     .iternext = array_it_iternext,
 };
 
-mp_obj_t array_iterator_new(mp_obj_t array_in) {
+STATIC mp_obj_t array_iterator_new(mp_obj_t array_in) {
     mp_obj_array_t *array = array_in;
     mp_obj_array_it_t *o = m_new_obj(mp_obj_array_it_t);
     o->base.type = &array_it_type;

@@ -1,5 +1,3 @@
-#include <stdlib.h>
-#include <stdint.h>
 #include <string.h>
 #include <assert.h>
 
@@ -55,7 +53,7 @@ STATIC mp_obj_t list_make_new(mp_obj_t type_in, uint n_args, uint n_kw, const mp
             mp_obj_t iterable = rt_getiter(args[0]);
             mp_obj_t list = mp_obj_new_list(0, NULL);
             mp_obj_t item;
-            while ((item = rt_iternext(iterable)) != mp_const_stop_iteration) {
+            while ((item = rt_iternext(iterable)) != MP_OBJ_NULL) {
                 mp_obj_list_append(list, item);
             }
             return list;
@@ -104,7 +102,7 @@ STATIC mp_obj_t list_binary_op(int op, mp_obj_t lhs, mp_obj_t rhs) {
                 return res;
             }
 #endif
-            uint index = mp_get_index(o->base.type, o->len, rhs);
+            uint index = mp_get_index(o->base.type, o->len, rhs, false);
             return o->items[index];
         }
         case RT_BINARY_OP_ADD:
@@ -190,7 +188,7 @@ STATIC mp_obj_t list_pop(uint n_args, const mp_obj_t *args) {
     if (self->len == 0) {
         nlr_jump(mp_obj_new_exception_msg(&mp_type_IndexError, "pop from empty list"));
     }
-    uint index = mp_get_index(self->base.type, self->len, n_args == 1 ? mp_obj_new_int(-1) : args[1]);
+    uint index = mp_get_index(self->base.type, self->len, n_args == 1 ? mp_obj_new_int(-1) : args[1], false);
     mp_obj_t ret = self->items[index];
     self->len -= 1;
     memcpy(self->items + index, self->items + index + 1, (self->len - index) * sizeof(mp_obj_t));
@@ -330,20 +328,21 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_2(list_remove_obj, list_remove);
 STATIC MP_DEFINE_CONST_FUN_OBJ_1(list_reverse_obj, list_reverse);
 STATIC MP_DEFINE_CONST_FUN_OBJ_KW(list_sort_obj, 0, mp_obj_list_sort);
 
-STATIC const mp_method_t list_type_methods[] = {
-    { "append", &list_append_obj },
-    { "clear", &list_clear_obj },
-    { "copy", &list_copy_obj },
-    { "count", &list_count_obj },
-    { "extend", &list_extend_obj },
-    { "index", &list_index_obj },
-    { "insert", &list_insert_obj },
-    { "pop", &list_pop_obj },
-    { "remove", &list_remove_obj },
-    { "reverse", &list_reverse_obj },
-    { "sort", &list_sort_obj },
-    { NULL, NULL }, // end-of-list sentinel
+STATIC const mp_map_elem_t list_locals_dict_table[] = {
+    { MP_OBJ_NEW_QSTR(MP_QSTR_append), (mp_obj_t)&list_append_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_clear), (mp_obj_t)&list_clear_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_copy), (mp_obj_t)&list_copy_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_count), (mp_obj_t)&list_count_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_extend), (mp_obj_t)&list_extend_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_index), (mp_obj_t)&list_index_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_insert), (mp_obj_t)&list_insert_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_pop), (mp_obj_t)&list_pop_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_remove), (mp_obj_t)&list_remove_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_reverse), (mp_obj_t)&list_reverse_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_sort), (mp_obj_t)&list_sort_obj },
 };
+
+STATIC MP_DEFINE_CONST_DICT(list_locals_dict, list_locals_dict_table);
 
 const mp_obj_type_t list_type = {
     { &mp_type_type },
@@ -353,7 +352,7 @@ const mp_obj_type_t list_type = {
     .unary_op = list_unary_op,
     .binary_op = list_binary_op,
     .getiter = list_getiter,
-    .methods = list_type_methods,
+    .locals_dict = (mp_obj_t)&list_locals_dict,
 };
 
 STATIC mp_obj_list_t *list_new(uint n) {
@@ -383,7 +382,7 @@ void mp_obj_list_get(mp_obj_t self_in, uint *len, mp_obj_t **items) {
 
 void mp_obj_list_store(mp_obj_t self_in, mp_obj_t index, mp_obj_t value) {
     mp_obj_list_t *self = self_in;
-    uint i = mp_get_index(self->base.type, self->len, index);
+    uint i = mp_get_index(self->base.type, self->len, index, false);
     self->items[i] = value;
 }
 
@@ -403,7 +402,7 @@ mp_obj_t list_it_iternext(mp_obj_t self_in) {
         self->cur += 1;
         return o_out;
     } else {
-        return mp_const_stop_iteration;
+        return MP_OBJ_NULL;
     }
 }
 

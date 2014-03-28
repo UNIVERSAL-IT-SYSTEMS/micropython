@@ -1,8 +1,4 @@
-#include <stdint.h>
-#include <stdlib.h>
 #include <stdio.h>
-#include <stdarg.h>
-#include <string.h>
 #include <assert.h>
 
 #include "nlr.h"
@@ -14,6 +10,10 @@
 #include "runtime.h"
 #include "map.h"
 #include "builtin.h"
+
+#if MICROPY_ENABLE_FLOAT
+#include <math.h>
+#endif
 
 // args[0] is function from class body
 // args[1] is class name
@@ -79,7 +79,7 @@ mp_obj_t mp_builtin_abs(mp_obj_t o_in) {
         }
         return MP_OBJ_NEW_SMALL_INT(val);
 #if MICROPY_ENABLE_FLOAT
-    } else if (MP_OBJ_IS_TYPE(o_in, &float_type)) {
+    } else if (MP_OBJ_IS_TYPE(o_in, &mp_type_float)) {
         mp_float_t value = mp_obj_float_get(o_in);
         // TODO check for NaN etc
         if (value < 0) {
@@ -87,10 +87,10 @@ mp_obj_t mp_builtin_abs(mp_obj_t o_in) {
         } else {
             return o_in;
         }
-    } else if (MP_OBJ_IS_TYPE(o_in, &complex_type)) {
+    } else if (MP_OBJ_IS_TYPE(o_in, &mp_type_complex)) {
         mp_float_t real, imag;
         mp_obj_complex_get(o_in, &real, &imag);
-        return mp_obj_new_float(machine_sqrt(real*real + imag*imag));
+        return mp_obj_new_float(MICROPY_FLOAT_C_FUN(sqrt)(real*real + imag*imag));
 #endif
     } else {
         assert(0);
@@ -103,7 +103,7 @@ MP_DEFINE_CONST_FUN_OBJ_1(mp_builtin_abs_obj, mp_builtin_abs);
 STATIC mp_obj_t mp_builtin_all(mp_obj_t o_in) {
     mp_obj_t iterable = rt_getiter(o_in);
     mp_obj_t item;
-    while ((item = rt_iternext(iterable)) != mp_const_stop_iteration) {
+    while ((item = rt_iternext(iterable)) != MP_OBJ_NULL) {
         if (!rt_is_true(item)) {
             return mp_const_false;
         }
@@ -116,7 +116,7 @@ MP_DEFINE_CONST_FUN_OBJ_1(mp_builtin_all_obj, mp_builtin_all);
 STATIC mp_obj_t mp_builtin_any(mp_obj_t o_in) {
     mp_obj_t iterable = rt_getiter(o_in);
     mp_obj_t item;
-    while ((item = rt_iternext(iterable)) != mp_const_stop_iteration) {
+    while ((item = rt_iternext(iterable)) != MP_OBJ_NULL) {
         if (rt_is_true(item)) {
             return mp_const_true;
         }
@@ -151,28 +151,36 @@ MP_DEFINE_CONST_FUN_OBJ_1(mp_builtin_chr_obj, mp_builtin_chr);
 STATIC mp_obj_t mp_builtin_dir(uint n_args, const mp_obj_t *args) {
     // TODO make this function more general and less of a hack
 
-    mp_map_t *map;
+    mp_map_t *map = NULL;
     if (n_args == 0) {
         // make a list of names in the local name space
         map = rt_locals_get();
     } else { // n_args == 1
         // make a list of names in the given object
-        mp_obj_type_t *type = mp_obj_get_type(args[0]);
-        if (type == &module_type) {
+        if (MP_OBJ_IS_TYPE(args[0], &mp_type_module)) {
             map = mp_obj_module_get_globals(args[0]);
-        } else if (type->locals_dict != MP_OBJ_NULL && MP_OBJ_IS_TYPE(type->locals_dict, &dict_type)) {
-            map = mp_obj_dict_get_map(type->locals_dict);
         } else {
-            return mp_obj_new_list(0, NULL);
+            mp_obj_type_t *type;
+            if (MP_OBJ_IS_TYPE(args[0], &mp_type_type)) {
+                type = args[0];
+            } else {
+                type = mp_obj_get_type(args[0]);
+            }
+            if (type->locals_dict != MP_OBJ_NULL && MP_OBJ_IS_TYPE(type->locals_dict, &dict_type)) {
+                map = mp_obj_dict_get_map(type->locals_dict);
+            }
         }
     }
 
     mp_obj_t dir = mp_obj_new_list(0, NULL);
-    for (uint i = 0; i < map->alloc; i++) {
-        if (map->table[i].key != MP_OBJ_NULL) {
-            mp_obj_list_append(dir, map->table[i].key);
+    if (map != NULL) {
+        for (uint i = 0; i < map->alloc; i++) {
+            if (map->table[i].key != MP_OBJ_NULL) {
+                mp_obj_list_append(dir, map->table[i].key);
+            }
         }
     }
+
     return dir;
 }
 
@@ -223,7 +231,7 @@ STATIC mp_obj_t mp_builtin_max(uint n_args, const mp_obj_t *args) {
         mp_obj_t iterable = rt_getiter(args[0]);
         mp_obj_t max_obj = NULL;
         mp_obj_t item;
-        while ((item = rt_iternext(iterable)) != mp_const_stop_iteration) {
+        while ((item = rt_iternext(iterable)) != MP_OBJ_NULL) {
             if (max_obj == NULL || mp_obj_less(max_obj, item)) {
                 max_obj = item;
             }
@@ -252,7 +260,7 @@ STATIC mp_obj_t mp_builtin_min(uint n_args, const mp_obj_t *args) {
         mp_obj_t iterable = rt_getiter(args[0]);
         mp_obj_t min_obj = NULL;
         mp_obj_t item;
-        while ((item = rt_iternext(iterable)) != mp_const_stop_iteration) {
+        while ((item = rt_iternext(iterable)) != MP_OBJ_NULL) {
             if (min_obj == NULL || mp_obj_less(item, min_obj)) {
                 min_obj = item;
             }
@@ -276,8 +284,8 @@ STATIC mp_obj_t mp_builtin_min(uint n_args, const mp_obj_t *args) {
 MP_DEFINE_CONST_FUN_OBJ_VAR(mp_builtin_min_obj, 1, mp_builtin_min);
 
 STATIC mp_obj_t mp_builtin_next(mp_obj_t o) {
-    mp_obj_t ret = rt_iternext(o);
-    if (ret == mp_const_stop_iteration) {
+    mp_obj_t ret = rt_iternext_allow_raise(o);
+    if (ret == MP_OBJ_NULL) {
         nlr_jump(mp_obj_new_exception(&mp_type_StopIteration));
     } else {
         return ret;
@@ -353,7 +361,7 @@ STATIC mp_obj_t mp_builtin_sum(uint n_args, const mp_obj_t *args) {
     }
     mp_obj_t iterable = rt_getiter(args[0]);
     mp_obj_t item;
-    while ((item = rt_iternext(iterable)) != mp_const_stop_iteration) {
+    while ((item = rt_iternext(iterable)) != MP_OBJ_NULL) {
         value = rt_binary_op(RT_BINARY_OP_ADD, value, item);
     }
     return value;
@@ -375,30 +383,15 @@ STATIC mp_obj_t mp_builtin_sorted(uint n_args, const mp_obj_t *args, mp_map_t *k
 
 MP_DEFINE_CONST_FUN_OBJ_KW(mp_builtin_sorted_obj, 1, mp_builtin_sorted);
 
-STATIC mp_obj_t mp_builtin_str(mp_obj_t o_in) {
-    vstr_t *vstr = vstr_new();
-    mp_obj_print_helper((void (*)(void*, const char*, ...))vstr_printf, vstr, o_in, PRINT_STR);
-    mp_obj_t s = mp_obj_new_str((byte*)vstr->buf, vstr->len, false);
-    vstr_free(vstr);
-    return s;
-}
-
-MP_DEFINE_CONST_FUN_OBJ_1(mp_builtin_str_obj, mp_builtin_str);
-
-// TODO: This should be type, this is just quick CPython compat hack
-STATIC mp_obj_t mp_builtin_bytes(uint n_args, const mp_obj_t *args) {
-    if (!MP_OBJ_IS_QSTR(args[0]) && !MP_OBJ_IS_TYPE(args[0], &str_type)) {
-        assert(0);
-    }
-    // Currently, MicroPython strings are mix between CPython byte and unicode
-    // strings. So, conversion is null so far.
-    return args[0];
-}
-
-MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mp_builtin_bytes_obj, 1, 3, mp_builtin_bytes);
-
 STATIC mp_obj_t mp_builtin_id(mp_obj_t o_in) {
     return mp_obj_new_int((machine_int_t)o_in);
 }
 
 MP_DEFINE_CONST_FUN_OBJ_1(mp_builtin_id_obj, mp_builtin_id);
+
+STATIC mp_obj_t mp_builtin_getattr(mp_obj_t o_in, mp_obj_t attr) {
+    assert(MP_OBJ_IS_QSTR(attr));
+    return rt_load_attr(o_in, MP_OBJ_QSTR_VALUE(attr));
+}
+
+MP_DEFINE_CONST_FUN_OBJ_2(mp_builtin_getattr_obj, mp_builtin_getattr);

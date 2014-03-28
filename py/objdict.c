@@ -1,5 +1,4 @@
-#include <stdlib.h>
-#include <stdint.h>
+#include <stdbool.h>
 #include <string.h>
 #include <assert.h>
 
@@ -8,14 +7,9 @@
 #include "mpconfig.h"
 #include "qstr.h"
 #include "obj.h"
+#include "map.h"
 #include "runtime0.h"
 #include "runtime.h"
-#include "map.h"
-
-typedef struct _mp_obj_dict_t {
-    mp_obj_base_t base;
-    mp_map_t map;
-} mp_obj_dict_t;
 
 STATIC mp_obj_t mp_obj_new_dict_iterator(mp_obj_dict_t *dict, int cur);
 STATIC mp_map_elem_t *dict_it_iternext_elem(mp_obj_t self_in);
@@ -107,7 +101,7 @@ mp_obj_t dict_it_iternext(mp_obj_t self_in) {
     if (next != NULL) {
         return next->key;
     } else {
-        return mp_const_stop_iteration;
+        return MP_OBJ_NULL;
     }
 }
 
@@ -172,7 +166,7 @@ STATIC mp_obj_t dict_fromkeys(uint n_args, const mp_obj_t *args) {
         self = mp_obj_new_dict(MP_OBJ_SMALL_INT_VALUE(len));
     }
 
-    while ((next = rt_iternext(iter)) != mp_const_stop_iteration) {
+    while ((next = rt_iternext(iter)) != MP_OBJ_NULL) {
         mp_map_lookup(&self->map, next, MP_MAP_LOOKUP_ADD_IF_NOT_FOUND)->value = value;
     }
 
@@ -267,14 +261,14 @@ STATIC mp_obj_t dict_update(mp_obj_t self_in, mp_obj_t iterable) {
     /* TODO: check for the "keys" method */
     mp_obj_t iter = rt_getiter(iterable);
     mp_obj_t next = NULL;
-    while ((next = rt_iternext(iter)) != mp_const_stop_iteration) {
+    while ((next = rt_iternext(iter)) != MP_OBJ_NULL) {
         mp_obj_t inneriter = rt_getiter(next);
         mp_obj_t key = rt_iternext(inneriter);
         mp_obj_t value = rt_iternext(inneriter);
         mp_obj_t stop = rt_iternext(inneriter);
-        if (key == mp_const_stop_iteration
-            || value == mp_const_stop_iteration
-            || stop != mp_const_stop_iteration) {
+        if (key == MP_OBJ_NULL
+            || value == MP_OBJ_NULL
+            || stop != MP_OBJ_NULL) {
             nlr_jump(mp_obj_new_exception_msg(
                          &mp_type_ValueError,
                          "dictionary update sequence has the wrong length"));
@@ -336,7 +330,7 @@ STATIC mp_obj_t dict_view_it_iternext(mp_obj_t self_in) {
                 return mp_const_none;
         }
     } else {
-        return mp_const_stop_iteration;
+        return MP_OBJ_NULL;
     }
 }
 
@@ -344,7 +338,6 @@ STATIC const mp_obj_type_t dict_view_it_type = {
     { &mp_type_type },
     .name = MP_QSTR_iterator,
     .iternext = dict_view_it_iternext,
-    .methods = NULL,            /* set operations still to come */
 };
 
 STATIC mp_obj_t dict_view_getiter(mp_obj_t view_in) {
@@ -365,7 +358,7 @@ STATIC void dict_view_print(void (*print)(void *env, const char *fmt, ...), void
     print(env, "([");
     mp_obj_t *self_iter = dict_view_getiter(self);
     mp_obj_t *next = NULL;
-    while ((next = dict_view_it_iternext(self_iter)) != mp_const_stop_iteration) {
+    while ((next = dict_view_it_iternext(self_iter)) != MP_OBJ_NULL) {
         if (!first) {
             print(env, ", ");
         }
@@ -424,20 +417,21 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_1(dict_values_obj, dict_values);
 /******************************************************************************/
 /* dict constructors & public C API                                           */
 
-STATIC const mp_method_t dict_type_methods[] = {
-    { "clear", &dict_clear_obj },
-    { "copy", &dict_copy_obj },
-    { "fromkeys", &dict_fromkeys_obj },
-    { "get", &dict_get_obj },
-    { "items", &dict_items_obj },
-    { "keys", &dict_keys_obj },
-    { "pop", &dict_pop_obj },
-    { "popitem", &dict_popitem_obj },
-    { "setdefault", &dict_setdefault_obj },
-    { "update", &dict_update_obj },
-    { "values", &dict_values_obj },
-    { NULL, NULL }, // end-of-list sentinel
+STATIC const mp_map_elem_t dict_locals_dict_table[] = {
+    { MP_OBJ_NEW_QSTR(MP_QSTR_clear), (mp_obj_t)&dict_clear_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_copy), (mp_obj_t)&dict_copy_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_fromkeys), (mp_obj_t)&dict_fromkeys_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_get), (mp_obj_t)&dict_get_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_items), (mp_obj_t)&dict_items_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_keys), (mp_obj_t)&dict_keys_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_pop), (mp_obj_t)&dict_pop_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_popitem), (mp_obj_t)&dict_popitem_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_setdefault), (mp_obj_t)&dict_setdefault_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_update), (mp_obj_t)&dict_update_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_values), (mp_obj_t)&dict_values_obj },
 };
+
+STATIC MP_DEFINE_CONST_DICT(dict_locals_dict, dict_locals_dict_table);
 
 const mp_obj_type_t dict_type = {
     { &mp_type_type },
@@ -447,7 +441,7 @@ const mp_obj_type_t dict_type = {
     .unary_op = dict_unary_op,
     .binary_op = dict_binary_op,
     .getiter = dict_getiter,
-    .methods = dict_type_methods,
+    .locals_dict = (mp_obj_t)&dict_locals_dict,
 };
 
 mp_obj_t mp_obj_new_dict(int n_args) {

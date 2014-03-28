@@ -33,12 +33,15 @@ CFLAGS += -I$(FATFS_DIR)
 #CFLAGS += -I$(CC3K_DIR)
 
 BOARD ?= STM32F4DISC
+ifeq ($(wildcard boards/$(BOARD)/.),)
+$(error Invalid BOARD specified)
+endif
 CFLAGS += -Iboards/$(BOARD)
 
 #Debugging/Optimization
 DEBUG?=1
 ifeq ($(DEBUG), 1)
-CFLAGS += -g
+CFLAGS += -g -DPENDSV_DEBUG
 COPT = -O0
 else
 COPT += -Os -DNDEBUG
@@ -55,6 +58,9 @@ LIBS =
 
 SRC_C = \
 	printf.c \
+	math.c \
+	system_stm32f4xx.c \
+	stm32fxxx_it.c \
 	string0.c \
 	malloc0.c \
 	systick.c  \
@@ -76,13 +82,15 @@ SRC_C = \
 	audio.c \
 	sdcard.c \
 	i2c.c \
-	usrsw.c \
 	adc.c \
 	rtc.c \
 	file.c \
 	pin.c \
 	pin_named_pins.c \
 	pin_map.c \
+	exti.c \
+	usrsw.c \
+	pybmodule.c \
 #	pybwlan.c \
 #	system_stm32f4xx.c \
 #	stm32fxxx_it.c \
@@ -152,6 +160,7 @@ SRC_STMUSBH = $(addprefix $(STMUSBH_DIR)/,\
 SRC_FATFS = $(addprefix $(FATFS_DIR)/,\
 	ff.c \
 	diskio.c \
+	ccsbcs.c \
 	)
 
 SRC_CC3K = $(addprefix $(CC3K_DIR)/,\
@@ -203,10 +212,21 @@ MAKE_PINS = boards/make-pins.py
 BOARD_PINS = boards/$(BOARD)/pins.csv
 AF_FILE = boards/stm32f4xx-af.csv
 PREFIX_FILE = boards/stm32f4xx-prefix.c
+GEN_PINS_SRC = $(BUILD)/pins_$(BOARD).c
+GEN_PINS_HDR = $(BUILD)/pins.h
 
-$(BUILD)/pins_$(BOARD).c: $(MAKE_PINS) $(BOARD_PINS) $(AF_FILE) $(PREFIX_FILE)
+# Making OBJ use an order-only depenedency on the generated pins.h file
+# has the side effect of making the pins.h file before we actually compile
+# any of the objects. The normal dependency generation will deal with the
+# case when pins.h is modified. But when it doesn't exist, we don't know
+# which source files might need it.
+$(OBJ): | $(BUILD)/pins.h
+
+# Use a pattern rule here so that make will only call make-pins.py once to make
+# both pins_$(BOARD).c and pins.h
+$(BUILD)/%_$(BOARD).c $(BUILD)/%.h: boards/$(BOARD)/%.csv $(MAKE_PINS) $(AF_FILE) $(PREFIX_FILE)
 	$(ECHO) "Create $@"
-	$(Q)python $(MAKE_PINS) --board $(BOARD_PINS) --af $(AF_FILE) --prefix $(PREFIX_FILE) > $@
+	$(Q)python $(MAKE_PINS) --board $(BOARD_PINS) --af $(AF_FILE) --prefix $(PREFIX_FILE) --hdr $(GEN_PINS_HDR) > $(GEN_PINS_SRC)
 
 $(BUILD)/pins_$(BOARD).o: $(BUILD)/pins_$(BOARD).c
 	$(call compile_c)

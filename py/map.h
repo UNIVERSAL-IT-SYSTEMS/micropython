@@ -3,12 +3,15 @@ typedef struct _mp_map_elem_t {
     mp_obj_t value;
 } mp_map_elem_t;
 
+// TODO maybe have a truncated mp_map_t for fixed tables, since alloc=used
+// put alloc last in the structure, so the truncated version does not need it
+// this would save 1 ROM word for all ROM objects that have a locals_dict
+// would also need a trucated dict structure
+
 typedef struct _mp_map_t {
-    struct {
-        machine_uint_t all_keys_are_qstrs : 1;
-        machine_uint_t table_is_fixed_array : 1;
-        machine_uint_t used : (8 * sizeof(machine_uint_t) - 2);
-    };
+    machine_uint_t all_keys_are_qstrs : 1;
+    machine_uint_t table_is_fixed_array : 1;
+    machine_uint_t used : (8 * sizeof(machine_uint_t) - 2);
     machine_uint_t alloc;
     mp_map_elem_t *table;
 } mp_map_t;
@@ -25,6 +28,11 @@ typedef enum _mp_map_lookup_kind_t {
     MP_MAP_LOOKUP_REMOVE_IF_FOUND,    // 2
     MP_MAP_LOOKUP_FIRST = 4,
 } mp_map_lookup_kind_t;
+
+typedef struct _mp_obj_dict_t {
+    mp_obj_base_t base;
+    mp_map_t map;
+} mp_obj_dict_t;
 
 int get_doubling_prime_greater_or_equal_to(int x);
 void mp_map_init(mp_map_t *map, int n);

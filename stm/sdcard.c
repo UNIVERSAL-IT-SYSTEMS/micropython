@@ -9,6 +9,7 @@
 #include "mpconfig.h"
 #include "qstr.h"
 #include "obj.h"
+#include "map.h"
 #include "runtime.h"
 #include "sdcard.h"
 
@@ -194,17 +195,18 @@ static mp_obj_t sd_read(mp_obj_t self, mp_obj_t block_num) {
 
 static MP_DEFINE_CONST_FUN_OBJ_2(sd_read_obj, sd_read);
 
-static const mp_method_t sdcard_methods[] = {
-    { "present", &sd_present_obj },
-    { "power", &sd_power_obj },
-    { "read", &sd_read_obj },
-    { NULL, NULL },
+STATIC const mp_map_elem_t sdcard_locals_dict_table[] = {
+    { MP_OBJ_NEW_QSTR(MP_QSTR_present), (mp_obj_t)&sd_present_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_power), (mp_obj_t)&sd_power_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_read), (mp_obj_t)&sd_read_obj },
 };
+
+STATIC MP_DEFINE_CONST_DICT(sdcard_locals_dict, sdcard_locals_dict_table);
 
 static const mp_obj_type_t sdcard_type = {
     { &mp_type_type },
     .name = MP_QSTR_SDcard,
-    .methods = sdcard_methods,
+    .locals_dict = (mp_obj_t)&sdcard_locals_dict,
 };
 
 const mp_obj_base_t pyb_sdcard_obj = {&sdcard_type};

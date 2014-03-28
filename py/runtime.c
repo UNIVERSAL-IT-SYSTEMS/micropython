@@ -1,9 +1,3 @@
-// in principle, rt_xxx functions are called only by vm/native/viper and make assumptions about args
-// mp_xxx functions are safer and can be called by anyone
-// note that rt_assign_xxx are called only from emit*, and maybe we can rename them to reflect this
-
-#include <stdint.h>
-#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
@@ -13,162 +7,35 @@
 #include "mpconfig.h"
 #include "qstr.h"
 #include "obj.h"
+#include "objmodule.h"
+#include "parsenum.h"
 #include "runtime0.h"
 #include "runtime.h"
+#include "emitglue.h"
 #include "map.h"
 #include "builtin.h"
-#include "objarray.h"
+#include "builtintables.h"
 #include "bc.h"
+#include "intdivmod.h"
 
 #if 0 // print debugging info
 #define DEBUG_PRINT (1)
 #define WRITE_CODE (1)
 #define DEBUG_printf DEBUG_printf
-#define DEBUG_OP_printf(args...) DEBUG_printf(args)
+#define DEBUG_OP_printf(...) DEBUG_printf(__VA_ARGS__)
 #else // don't print debugging info
-#define DEBUG_printf(args...) (void)0
-#define DEBUG_OP_printf(args...) (void)0
+#define DEBUG_printf(...) (void)0
+#define DEBUG_OP_printf(...) (void)0
 #endif
 
 // locals and globals need to be pointers because they can be the same in outer module scope
 STATIC mp_map_t *map_locals;
 STATIC mp_map_t *map_globals;
 STATIC mp_map_t map_builtins;
-STATIC mp_map_t map_loaded_modules; // TODO: expose as sys.modules
-
-typedef enum {
-    MP_CODE_NONE,
-    MP_CODE_BYTE,
-    MP_CODE_NATIVE,
-    MP_CODE_INLINE_ASM,
-} mp_code_kind_t;
-
-typedef struct _mp_code_t {
-    struct {
-        mp_code_kind_t kind : 8;
-        uint scope_flags : 8;
-    };
-    struct {
-        uint n_args : 16;
-        uint n_state : 16;
-    };
-    union {
-        struct {
-            byte *code;
-            uint len;
-        } u_byte;
-        struct {
-            mp_fun_t fun;
-        } u_native;
-        struct {
-            void *fun;
-        } u_inline_asm;
-    };
-    qstr *arg_names;
-} mp_code_t;
-
-STATIC uint next_unique_code_id;
-STATIC machine_uint_t unique_codes_alloc = 0;
-STATIC mp_code_t *unique_codes = NULL;
 
 #ifdef WRITE_CODE
 FILE *fp_write_code = NULL;
 #endif
-
-// builtins
-// we put this table in ROM because it's always needed and takes up quite a bit of room in RAM
-// in fact, it uses less ROM here in table form than the equivalent in code form initialising a dynamic mp_map_t object in RAM
-// at the moment it's a linear table, but we could convert it to a const mp_map_t table with a simple preprocessing script
-// if we wanted to allow dynamic modification of the builtins, we could provide an mp_map_t object which is searched before this one
-
-typedef struct _mp_builtin_elem_t {
-    qstr qstr;
-    mp_obj_t fun;
-} mp_builtin_elem_t;
-
-STATIC const mp_builtin_elem_t builtin_table[] = {
-    // built-in core functions
-    { MP_QSTR___build_class__, (mp_obj_t)&mp_builtin___build_class___obj },
-    { MP_QSTR___import__, (mp_obj_t)&mp_builtin___import___obj },
-    { MP_QSTR___repl_print__, (mp_obj_t)&mp_builtin___repl_print___obj },
-
-    // built-in types
-    { MP_QSTR_bool, (mp_obj_t)&bool_type },
-#if MICROPY_ENABLE_FLOAT
-    { MP_QSTR_complex, (mp_obj_t)&complex_type },
-#endif
-    { MP_QSTR_dict, (mp_obj_t)&dict_type },
-    { MP_QSTR_enumerate, (mp_obj_t)&enumerate_type },
-    { MP_QSTR_filter, (mp_obj_t)&filter_type },
-#if MICROPY_ENABLE_FLOAT
-    { MP_QSTR_float, (mp_obj_t)&float_type },
-#endif
-    { MP_QSTR_int, (mp_obj_t)&int_type },
-    { MP_QSTR_list, (mp_obj_t)&list_type },
-    { MP_QSTR_map, (mp_obj_t)&map_type },
-    { MP_QSTR_set, (mp_obj_t)&set_type },
-    { MP_QSTR_super, (mp_obj_t)&super_type },
-    { MP_QSTR_tuple, (mp_obj_t)&tuple_type },
-    { MP_QSTR_type, (mp_obj_t)&mp_type_type },
-    { MP_QSTR_zip, (mp_obj_t)&zip_type },
-
-    { MP_QSTR_classmethod, (mp_obj_t)&mp_type_classmethod },
-    { MP_QSTR_staticmethod, (mp_obj_t)&mp_type_staticmethod },
-
-    // built-in user functions
-    { MP_QSTR_abs, (mp_obj_t)&mp_builtin_abs_obj },
-    { MP_QSTR_all, (mp_obj_t)&mp_builtin_all_obj },
-    { MP_QSTR_any, (mp_obj_t)&mp_builtin_any_obj },
-    { MP_QSTR_bytes, (mp_obj_t)&mp_builtin_bytes_obj },
-    { MP_QSTR_callable, (mp_obj_t)&mp_builtin_callable_obj },
-    { MP_QSTR_chr, (mp_obj_t)&mp_builtin_chr_obj },
-    { MP_QSTR_dir, (mp_obj_t)&mp_builtin_dir_obj },
-    { MP_QSTR_divmod, (mp_obj_t)&mp_builtin_divmod_obj },
-    { MP_QSTR_eval, (mp_obj_t)&mp_builtin_eval_obj },
-    { MP_QSTR_exec, (mp_obj_t)&mp_builtin_exec_obj },
-    { MP_QSTR_hash, (mp_obj_t)&mp_builtin_hash_obj },
-    { MP_QSTR_id, (mp_obj_t)&mp_builtin_id_obj },
-    { MP_QSTR_isinstance, (mp_obj_t)&mp_builtin_isinstance_obj },
-    { MP_QSTR_issubclass, (mp_obj_t)&mp_builtin_issubclass_obj },
-    { MP_QSTR_iter, (mp_obj_t)&mp_builtin_iter_obj },
-    { MP_QSTR_len, (mp_obj_t)&mp_builtin_len_obj },
-    { MP_QSTR_max, (mp_obj_t)&mp_builtin_max_obj },
-    { MP_QSTR_min, (mp_obj_t)&mp_builtin_min_obj },
-    { MP_QSTR_next, (mp_obj_t)&mp_builtin_next_obj },
-    { MP_QSTR_ord, (mp_obj_t)&mp_builtin_ord_obj },
-    { MP_QSTR_pow, (mp_obj_t)&mp_builtin_pow_obj },
-    { MP_QSTR_print, (mp_obj_t)&mp_builtin_print_obj },
-    { MP_QSTR_range, (mp_obj_t)&mp_builtin_range_obj },
-    { MP_QSTR_repr, (mp_obj_t)&mp_builtin_repr_obj },
-    { MP_QSTR_sorted, (mp_obj_t)&mp_builtin_sorted_obj },
-    { MP_QSTR_sum, (mp_obj_t)&mp_builtin_sum_obj },
-    { MP_QSTR_str, (mp_obj_t)&mp_builtin_str_obj },
-    { MP_QSTR_bytearray, (mp_obj_t)&mp_builtin_bytearray_obj },
-
-    // built-in exceptions
-    { MP_QSTR_BaseException, (mp_obj_t)&mp_type_BaseException },
-    { MP_QSTR_AssertionError, (mp_obj_t)&mp_type_AssertionError },
-    { MP_QSTR_AttributeError, (mp_obj_t)&mp_type_AttributeError },
-    { MP_QSTR_ImportError, (mp_obj_t)&mp_type_ImportError },
-    { MP_QSTR_IndentationError, (mp_obj_t)&mp_type_IndentationError },
-    { MP_QSTR_IndexError, (mp_obj_t)&mp_type_IndexError },
-    { MP_QSTR_KeyError, (mp_obj_t)&mp_type_KeyError },
-    { MP_QSTR_NameError, (mp_obj_t)&mp_type_NameError },
-    { MP_QSTR_SyntaxError, (mp_obj_t)&mp_type_SyntaxError },
-    { MP_QSTR_TypeError, (mp_obj_t)&mp_type_TypeError },
-    { MP_QSTR_ValueError, (mp_obj_t)&mp_type_ValueError },
-    // Somehow CPython managed to have OverflowError not inherit from ValueError ;-/
-    // TODO: For MICROPY_CPYTHON_COMPAT==0 use ValueError to avoid exc proliferation
-    { MP_QSTR_OverflowError, (mp_obj_t)&mp_type_OverflowError },
-    { MP_QSTR_OSError, (mp_obj_t)&mp_type_OSError },
-    { MP_QSTR_NotImplementedError, (mp_obj_t)&mp_type_NotImplementedError },
-    { MP_QSTR_StopIteration, (mp_obj_t)&mp_type_StopIteration },
-
-    // Extra builtins as defined by a port
-    MICROPY_EXTRA_BUILTINS
-
-    { MP_QSTR_, MP_OBJ_NULL }, // end of list sentinel
-};
 
 // a good optimising compiler will inline this if necessary
 STATIC void mp_map_add_qstr(mp_map_t *map, qstr qstr, mp_obj_t value) {
@@ -176,21 +43,20 @@ STATIC void mp_map_add_qstr(mp_map_t *map, qstr qstr, mp_obj_t value) {
 }
 
 void rt_init(void) {
+    mp_emit_glue_init();
+
     // locals = globals for outer module (see Objects/frameobject.c/PyFrame_New())
     map_locals = map_globals = mp_map_new(1);
-    mp_map_add_qstr(map_globals, MP_QSTR___name__, MP_OBJ_NEW_QSTR(MP_QSTR___main__));
 
     // init built-in hash table
     mp_map_init(&map_builtins, 3);
 
-    // init loaded modules table
-    mp_map_init(&map_loaded_modules, 3);
+    // init global module stuff
+    mp_module_init();
 
-    // built-in objects
+    // add some builtins that can't be done in ROM
+    mp_map_add_qstr(map_globals, MP_QSTR___name__, MP_OBJ_NEW_QSTR(MP_QSTR___main__));
     mp_map_add_qstr(&map_builtins, MP_QSTR_Ellipsis, mp_const_ellipsis);
-
-    mp_obj_t m_array = mp_obj_new_module(MP_QSTR_array);
-    rt_store_attr(m_array, MP_QSTR_array, (mp_obj_t)&array_type);
 
 #if MICROPY_CPYTHON_COMPAT
     // Precreate sys module, so "import sys" didn't throw exceptions.
@@ -203,134 +69,21 @@ void rt_init(void) {
     //sys_path = mp_obj_new_list(0, NULL);
     //rt_store_attr(m_sys, MP_QSTR_path, sys_path);
 
-    mp_module_micropython_init();
-
-    // TODO: wastes one mp_code_t structure in mem
-    next_unique_code_id = 1; // 0 indicates "no code"
-    unique_codes_alloc = 0;
-    unique_codes = NULL;
-
 #ifdef WRITE_CODE
     fp_write_code = fopen("out-code", "wb");
 #endif
 }
 
 void rt_deinit(void) {
-    m_del(mp_code_t, unique_codes, unique_codes_alloc);
-    mp_map_free(map_globals);
-    mp_map_deinit(&map_loaded_modules);
-    mp_map_deinit(&map_builtins);
 #ifdef WRITE_CODE
     if (fp_write_code != NULL) {
         fclose(fp_write_code);
     }
 #endif
-}
-
-uint rt_get_unique_code_id(void) {
-    return next_unique_code_id++;
-}
-
-STATIC void alloc_unique_codes(void) {
-    if (next_unique_code_id > unique_codes_alloc) {
-        DEBUG_printf("allocate more unique codes: " UINT_FMT " -> %u\n", unique_codes_alloc, next_unique_code_id);
-        // increase size of unique_codes table
-        unique_codes = m_renew(mp_code_t, unique_codes, unique_codes_alloc, next_unique_code_id);
-        for (uint i = unique_codes_alloc; i < next_unique_code_id; i++) {
-            unique_codes[i].kind = MP_CODE_NONE;
-        }
-        unique_codes_alloc = next_unique_code_id;
-    }
-}
-
-void rt_assign_byte_code(uint unique_code_id, byte *code, uint len, int n_args, int n_locals, int n_stack, uint scope_flags, qstr *arg_names) {
-    alloc_unique_codes();
-
-    assert(1 <= unique_code_id && unique_code_id < next_unique_code_id && unique_codes[unique_code_id].kind == MP_CODE_NONE);
-    unique_codes[unique_code_id].kind = MP_CODE_BYTE;
-    unique_codes[unique_code_id].scope_flags = scope_flags;
-    unique_codes[unique_code_id].n_args = n_args;
-    unique_codes[unique_code_id].n_state = n_locals + n_stack;
-    unique_codes[unique_code_id].u_byte.code = code;
-    unique_codes[unique_code_id].u_byte.len = len;
-    unique_codes[unique_code_id].arg_names = arg_names;
-
-    //printf("byte code: %d bytes\n", len);
-
-#ifdef DEBUG_PRINT
-    DEBUG_printf("assign byte code: id=%d code=%p len=%u n_args=%d n_locals=%d n_stack=%d\n", unique_code_id, code, len, n_args, n_locals, n_stack);
-    for (int i = 0; i < 128 && i < len; i++) {
-        if (i > 0 && i % 16 == 0) {
-            DEBUG_printf("\n");
-        }
-        DEBUG_printf(" %02x", code[i]);
-    }
-    DEBUG_printf("\n");
-#if MICROPY_DEBUG_PRINTERS
-    mp_byte_code_print(code, len);
-#endif
-#endif
-}
-
-void rt_assign_native_code(uint unique_code_id, void *fun, uint len, int n_args) {
-    alloc_unique_codes();
-
-    assert(1 <= unique_code_id && unique_code_id < next_unique_code_id && unique_codes[unique_code_id].kind == MP_CODE_NONE);
-    unique_codes[unique_code_id].kind = MP_CODE_NATIVE;
-    unique_codes[unique_code_id].scope_flags = 0;
-    unique_codes[unique_code_id].n_args = n_args;
-    unique_codes[unique_code_id].n_state = 0;
-    unique_codes[unique_code_id].u_native.fun = fun;
-
-    //printf("native code: %d bytes\n", len);
-
-#ifdef DEBUG_PRINT
-    DEBUG_printf("assign native code: id=%d fun=%p len=%u n_args=%d\n", unique_code_id, fun, len, n_args);
-    byte *fun_data = (byte*)(((machine_uint_t)fun) & (~1)); // need to clear lower bit in case it's thumb code
-    for (int i = 0; i < 128 && i < len; i++) {
-        if (i > 0 && i % 16 == 0) {
-            DEBUG_printf("\n");
-        }
-        DEBUG_printf(" %02x", fun_data[i]);
-    }
-    DEBUG_printf("\n");
-
-#ifdef WRITE_CODE
-    if (fp_write_code != NULL) {
-        fwrite(fun_data, len, 1, fp_write_code);
-        fflush(fp_write_code);
-    }
-#endif
-#endif
-}
-
-void rt_assign_inline_asm_code(uint unique_code_id, void *fun, uint len, int n_args) {
-    alloc_unique_codes();
-
-    assert(1 <= unique_code_id && unique_code_id < next_unique_code_id && unique_codes[unique_code_id].kind == MP_CODE_NONE);
-    unique_codes[unique_code_id].kind = MP_CODE_INLINE_ASM;
-    unique_codes[unique_code_id].scope_flags = 0;
-    unique_codes[unique_code_id].n_args = n_args;
-    unique_codes[unique_code_id].n_state = 0;
-    unique_codes[unique_code_id].u_inline_asm.fun = fun;
-
-#ifdef DEBUG_PRINT
-    DEBUG_printf("assign inline asm code: id=%d fun=%p len=%u n_args=%d\n", unique_code_id, fun, len, n_args);
-    byte *fun_data = (byte*)(((machine_uint_t)fun) & (~1)); // need to clear lower bit in case it's thumb code
-    for (int i = 0; i < 128 && i < len; i++) {
-        if (i > 0 && i % 16 == 0) {
-            DEBUG_printf("\n");
-        }
-        DEBUG_printf(" %02x", fun_data[i]);
-    }
-    DEBUG_printf("\n");
-
-#ifdef WRITE_CODE
-    if (fp_write_code != NULL) {
-        fwrite(fun_data, len, 1, fp_write_code);
-    }
-#endif
-#endif
+    mp_map_free(map_globals);
+    mp_map_deinit(&map_builtins);
+    mp_module_deinit();
+    mp_emit_glue_deinit();
 }
 
 int rt_is_true(mp_obj_t arg) {
@@ -371,72 +124,11 @@ mp_obj_t rt_list_append(mp_obj_t self_in, mp_obj_t arg) {
     return mp_obj_list_append(self_in, arg);
 }
 
-#define PARSE_DEC_IN_INTG (1)
-#define PARSE_DEC_IN_FRAC (2)
-#define PARSE_DEC_IN_EXP  (3)
-
 mp_obj_t rt_load_const_dec(qstr qstr) {
-#if MICROPY_ENABLE_FLOAT
     DEBUG_OP_printf("load '%s'\n", qstr_str(qstr));
-    const char *s = qstr_str(qstr);
-    int in = PARSE_DEC_IN_INTG;
-    mp_float_t dec_val = 0;
-    bool exp_neg = false;
-    int exp_val = 0;
-    int exp_extra = 0;
-    bool imag = false;
-    for (; *s; s++) {
-        int dig = *s;
-        if ('0' <= dig && dig <= '9') {
-            dig -= '0';
-            if (in == PARSE_DEC_IN_EXP) {
-                exp_val = 10 * exp_val + dig;
-            } else {
-                dec_val = 10 * dec_val + dig;
-                if (in == PARSE_DEC_IN_FRAC) {
-                    exp_extra -= 1;
-                }
-            }
-        } else if (in == PARSE_DEC_IN_INTG && dig == '.') {
-            in = PARSE_DEC_IN_FRAC;
-        } else if (in != PARSE_DEC_IN_EXP && (dig == 'E' || dig == 'e')) {
-            in = PARSE_DEC_IN_EXP;
-            if (s[1] == '+') {
-                s++;
-            } else if (s[1] == '-') {
-                s++;
-                exp_neg = true;
-            }
-        } else if (dig == 'J' || dig == 'j') {
-            s++;
-            imag = true;
-            break;
-        } else {
-            // unknown character
-            break;
-        }
-    }
-    if (*s != 0) {
-        nlr_jump(mp_obj_new_exception_msg(&mp_type_SyntaxError, "invalid syntax for number"));
-    }
-    if (exp_neg) {
-        exp_val = -exp_val;
-    }
-    exp_val += exp_extra;
-    for (; exp_val > 0; exp_val--) {
-        dec_val *= 10;
-    }
-    for (; exp_val < 0; exp_val++) {
-        dec_val *= 0.1;
-    }
-    if (imag) {
-        return mp_obj_new_complex(0, dec_val);
-    } else {
-        return mp_obj_new_float(dec_val);
-    }
-#else
-    nlr_jump(mp_obj_new_exception_msg(&mp_type_SyntaxError, "decimal numbers not supported"));
-#endif
+    uint len;
+    const byte* data = qstr_data(qstr, &len);
+    return mp_parse_num_decimal((const char*)data, len, true, false);
 }
 
 mp_obj_t rt_load_const_str(qstr qstr) {
@@ -469,10 +161,9 @@ mp_obj_t rt_load_global(qstr qstr) {
     if (elem == NULL) {
         elem = mp_map_lookup(&map_builtins, MP_OBJ_NEW_QSTR(qstr), MP_MAP_LOOKUP);
         if (elem == NULL) {
-            for (const mp_builtin_elem_t *e = &builtin_table[0]; e->qstr != MP_QSTR_; e++) {
-                if (e->qstr == qstr) {
-                    return e->fun;
-                }
+            mp_obj_t o = mp_builtin_tables_lookup_object(qstr);
+            if (o != MP_OBJ_NULL) {
+                return o;
             }
             nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_NameError, "name '%s' is not defined", qstr_str(qstr)));
         }
@@ -482,10 +173,13 @@ mp_obj_t rt_load_global(qstr qstr) {
 
 mp_obj_t rt_load_build_class(void) {
     DEBUG_OP_printf("load_build_class\n");
+    // lookup __build_class__ in dynamic table of builtins first
     mp_map_elem_t *elem = mp_map_lookup(&map_builtins, MP_OBJ_NEW_QSTR(MP_QSTR___build_class__), MP_MAP_LOOKUP);
     if (elem != NULL) {
+        // found user-defined __build_class__, return it
         return elem->value;
     } else {
+        // no user-defined __build_class__, return builtin one
         return (mp_obj_t)&mp_builtin___build_class___obj;
     }
 }
@@ -503,6 +197,11 @@ void rt_store_name(qstr qstr, mp_obj_t obj) {
     mp_map_lookup(map_locals, MP_OBJ_NEW_QSTR(qstr), MP_MAP_LOOKUP_ADD_IF_NOT_FOUND)->value = obj;
 }
 
+void rt_delete_name(qstr qstr) {
+    DEBUG_OP_printf("delete name %s\n", qstr_str(qstr));
+    mp_map_lookup(map_locals, MP_OBJ_NEW_QSTR(qstr), MP_MAP_LOOKUP_REMOVE_IF_FOUND);
+}
+
 void rt_store_global(qstr qstr, mp_obj_t obj) {
     DEBUG_OP_printf("store global %s <- %p\n", qstr_str(qstr), obj);
     mp_map_lookup(map_globals, MP_OBJ_NEW_QSTR(qstr), MP_MAP_LOOKUP_ADD_IF_NOT_FOUND)->value = obj;
@@ -514,16 +213,23 @@ mp_obj_t rt_unary_op(int op, mp_obj_t arg) {
     if (MP_OBJ_IS_SMALL_INT(arg)) {
         mp_small_int_t val = MP_OBJ_SMALL_INT_VALUE(arg);
         switch (op) {
-            case RT_UNARY_OP_BOOL: return MP_BOOL(val != 0);
-            case RT_UNARY_OP_POSITIVE: break;
-            case RT_UNARY_OP_NEGATIVE: val = -val; break;
-            case RT_UNARY_OP_INVERT: val = ~val; break;
-            default: assert(0); val = 0;
+            case RT_UNARY_OP_BOOL:
+                return MP_BOOL(val != 0);
+            case RT_UNARY_OP_POSITIVE:
+                return arg;
+            case RT_UNARY_OP_NEGATIVE:
+                // check for overflow
+                if (val == MP_SMALL_INT_MIN) {
+                    return mp_obj_new_int(-val);
+                } else {
+                    return MP_OBJ_NEW_SMALL_INT(-val);
+                }
+            case RT_UNARY_OP_INVERT:
+                return MP_OBJ_NEW_SMALL_INT(~val);
+            default:
+                assert(0);
+                return arg;
         }
-        if (MP_OBJ_FITS_SMALL_INT(val)) {
-            return MP_OBJ_NEW_SMALL_INT(val);
-        }
-        return mp_obj_new_int(val);
     } else {
         mp_obj_type_t *type = mp_obj_get_type(arg);
         if (type->unary_op != NULL) {
@@ -533,7 +239,7 @@ mp_obj_t rt_unary_op(int op, mp_obj_t arg) {
             }
         }
         // TODO specify in error message what the operator is
-        nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_TypeError, "bad operand type for unary operator: '%s'", type->name));
+        nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_TypeError, "bad operand type for unary operator: '%s'", mp_obj_get_type_str(arg)));
     }
 }
 
@@ -579,18 +285,29 @@ mp_obj_t rt_binary_op(int op, mp_obj_t lhs, mp_obj_t rhs) {
             if (mp_obj_is_exception_instance(lhs)) {
                 lhs = mp_obj_get_type(lhs);
             }
-            if (mp_obj_is_subclass(lhs, rhs)) {
+            if (mp_obj_is_subclass_fast(lhs, rhs)) {
                 return mp_const_true;
             } else {
                 return mp_const_false;
             }
         }
+        assert(0);
+        return mp_const_false;
     }
 
     if (MP_OBJ_IS_SMALL_INT(lhs)) {
         mp_small_int_t lhs_val = MP_OBJ_SMALL_INT_VALUE(lhs);
         if (MP_OBJ_IS_SMALL_INT(rhs)) {
             mp_small_int_t rhs_val = MP_OBJ_SMALL_INT_VALUE(rhs);
+            // This is a binary operation: lhs_val op rhs_val
+            // We need to be careful to handle overflow; see CERT INT32-C
+            // Operations that can overflow:
+            //      +       result always fits in machine_int_t, then handled by SMALL_INT check
+            //      -       result always fits in machine_int_t, then handled by SMALL_INT check
+            //      *       checked explicitly
+            //      /       if lhs=MIN and rhs=-1; result always fits in machine_int_t, then handled by SMALL_INT check
+            //      %       if lhs=MIN and rhs=-1; result always fits in machine_int_t, then handled by SMALL_INT check
+            //      <<      checked explicitly
             switch (op) {
                 case RT_BINARY_OP_OR:
                 case RT_BINARY_OP_INPLACE_OR: lhs_val |= rhs_val; break;
@@ -599,41 +316,123 @@ mp_obj_t rt_binary_op(int op, mp_obj_t lhs, mp_obj_t rhs) {
                 case RT_BINARY_OP_AND:
                 case RT_BINARY_OP_INPLACE_AND: lhs_val &= rhs_val; break;
                 case RT_BINARY_OP_LSHIFT:
-                case RT_BINARY_OP_INPLACE_LSHIFT: lhs_val <<= rhs_val; break;
+                case RT_BINARY_OP_INPLACE_LSHIFT: {
+                    if (rhs_val < 0) {
+                        // negative shift not allowed
+                        nlr_jump(mp_obj_new_exception_msg(&mp_type_ValueError, "negative shift count"));
+                    } else if (rhs_val >= BITS_PER_WORD || lhs_val > (MP_SMALL_INT_MAX >> rhs_val) || lhs_val < (MP_SMALL_INT_MIN >> rhs_val)) {
+                        // left-shift will overflow, so use higher precision integer
+                        lhs = mp_obj_new_int_from_ll(lhs_val);
+                        goto generic_binary_op;
+                    } else {
+                        // use standard precision
+                        lhs_val <<= rhs_val;
+                    }
+                    break;
+                }
                 case RT_BINARY_OP_RSHIFT:
-                case RT_BINARY_OP_INPLACE_RSHIFT: lhs_val >>= rhs_val; break;
+                case RT_BINARY_OP_INPLACE_RSHIFT:
+                    if (rhs_val < 0) {
+                        // negative shift not allowed
+                        nlr_jump(mp_obj_new_exception_msg(&mp_type_ValueError, "negative shift count"));
+                    } else {
+                        // standard precision is enough for right-shift
+                        lhs_val >>= rhs_val;
+                    }
+                    break;
                 case RT_BINARY_OP_ADD:
                 case RT_BINARY_OP_INPLACE_ADD: lhs_val += rhs_val; break;
                 case RT_BINARY_OP_SUBTRACT:
                 case RT_BINARY_OP_INPLACE_SUBTRACT: lhs_val -= rhs_val; break;
                 case RT_BINARY_OP_MULTIPLY:
-                case RT_BINARY_OP_INPLACE_MULTIPLY: lhs_val *= rhs_val; break;
-                case RT_BINARY_OP_FLOOR_DIVIDE:
-                case RT_BINARY_OP_INPLACE_FLOOR_DIVIDE: lhs_val /= rhs_val; break;
-    #if MICROPY_ENABLE_FLOAT
-                case RT_BINARY_OP_TRUE_DIVIDE:
-                case RT_BINARY_OP_INPLACE_TRUE_DIVIDE: return mp_obj_new_float((mp_float_t)lhs_val / (mp_float_t)rhs_val);
-    #endif
+                case RT_BINARY_OP_INPLACE_MULTIPLY: {
 
-                // TODO implement modulo as specified by Python
-                case RT_BINARY_OP_MODULO:
-                case RT_BINARY_OP_INPLACE_MODULO: lhs_val %= rhs_val; break;
-
-                // TODO check for negative power, and overflow
-                case RT_BINARY_OP_POWER:
-                case RT_BINARY_OP_INPLACE_POWER:
-                {
-                    int ans = 1;
-                    while (rhs_val > 0) {
-                        if (rhs_val & 1) {
-                            ans *= lhs_val;
-                        }
-                        lhs_val *= lhs_val;
-                        rhs_val /= 2;
+                    // If long long type exists and is larger than machine_int_t, then
+                    // we can use the following code to perform overflow-checked multiplication.
+                    // Otherwise (eg in x64 case) we must use the branching code below.
+                    #if 0
+                    // compute result using long long precision
+                    long long res = (long long)lhs_val * (long long)rhs_val;
+                    if (res > MP_SMALL_INT_MAX || res < MP_SMALL_INT_MIN) {
+                        // result overflowed SMALL_INT, so return higher precision integer
+                        return mp_obj_new_int_from_ll(res);
+                    } else {
+                        // use standard precision
+                        lhs_val = (mp_small_int_t)res;
                     }
-                    lhs_val = ans;
+                    #endif
+
+                    if (lhs_val > 0) { // lhs_val is positive
+                        if (rhs_val > 0) { // lhs_val and rhs_val are positive
+                            if (lhs_val > (MP_SMALL_INT_MAX / rhs_val)) {
+                                goto mul_overflow;
+                            }
+                        } else { // lhs_val positive, rhs_val nonpositive
+                            if (rhs_val < (MP_SMALL_INT_MIN / lhs_val)) {
+                                goto mul_overflow;
+                            }
+                        } // lhs_val positive, rhs_val nonpositive
+                    } else { // lhs_val is nonpositive
+                        if (rhs_val > 0) { // lhs_val is nonpositive, rhs_val is positive
+                            if (lhs_val < (MP_SMALL_INT_MIN / rhs_val)) {
+                                goto mul_overflow;
+                            }
+                        } else { // lhs_val and rhs_val are nonpositive
+                            if (lhs_val != 0 && rhs_val < (MP_SMALL_INT_MAX / lhs_val)) {
+                                goto mul_overflow;
+                            }
+                        } // End if lhs_val and rhs_val are nonpositive
+                    } // End if lhs_val is nonpositive
+
+                    // use standard precision
+                    return MP_OBJ_NEW_SMALL_INT(lhs_val * rhs_val);
+
+                mul_overflow:
+                    // use higher precision
+                    lhs = mp_obj_new_int_from_ll(lhs_val);
+                    goto generic_binary_op;
+
                     break;
                 }
+                case RT_BINARY_OP_FLOOR_DIVIDE:
+                case RT_BINARY_OP_INPLACE_FLOOR_DIVIDE:
+                {
+                    lhs_val = python_floor_divide(lhs_val, rhs_val);
+                    break;
+                }
+                #if MICROPY_ENABLE_FLOAT
+                case RT_BINARY_OP_TRUE_DIVIDE:
+                case RT_BINARY_OP_INPLACE_TRUE_DIVIDE: return mp_obj_new_float((mp_float_t)lhs_val / (mp_float_t)rhs_val);
+                #endif
+
+                case RT_BINARY_OP_MODULO:
+                case RT_BINARY_OP_INPLACE_MODULO:
+                {
+                    lhs_val = python_modulo(lhs_val, rhs_val);
+                    break;
+                }
+                case RT_BINARY_OP_POWER:
+                case RT_BINARY_OP_INPLACE_POWER:
+                    if (rhs_val < 0) {
+                        #if MICROPY_ENABLE_FLOAT
+                        lhs = mp_obj_new_float(lhs_val);
+                        goto generic_binary_op;
+                        #else
+                        nlr_jump(mp_obj_new_exception_msg(&mp_type_ValueError, "negative power with no float support"));
+                        #endif
+                    } else {
+                        // TODO check for overflow
+                        machine_int_t ans = 1;
+                        while (rhs_val > 0) {
+                            if (rhs_val & 1) {
+                                ans *= lhs_val;
+                            }
+                            lhs_val *= lhs_val;
+                            rhs_val /= 2;
+                        }
+                        lhs_val = ans;
+                    }
+                    break;
                 case RT_BINARY_OP_LESS: return MP_BOOL(lhs_val < rhs_val); break;
                 case RT_BINARY_OP_MORE: return MP_BOOL(lhs_val > rhs_val); break;
                 case RT_BINARY_OP_LESS_EQUAL: return MP_BOOL(lhs_val <= rhs_val); break;
@@ -644,12 +443,13 @@ mp_obj_t rt_binary_op(int op, mp_obj_t lhs, mp_obj_t rhs) {
             // TODO: We just should make mp_obj_new_int() inline and use that
             if (MP_OBJ_FITS_SMALL_INT(lhs_val)) {
                 return MP_OBJ_NEW_SMALL_INT(lhs_val);
+            } else {
+                return mp_obj_new_int(lhs_val);
             }
-            return mp_obj_new_int(lhs_val);
 #if MICROPY_ENABLE_FLOAT
-        } else if (MP_OBJ_IS_TYPE(rhs, &float_type)) {
+        } else if (MP_OBJ_IS_TYPE(rhs, &mp_type_float)) {
             return mp_obj_float_binary_op(op, lhs_val, rhs);
-        } else if (MP_OBJ_IS_TYPE(rhs, &complex_type)) {
+        } else if (MP_OBJ_IS_TYPE(rhs, &mp_type_complex)) {
             return mp_obj_complex_binary_op(op, lhs_val, 0, rhs);
 #endif
         }
@@ -672,7 +472,7 @@ mp_obj_t rt_binary_op(int op, mp_obj_t lhs, mp_obj_t rhs) {
             /* second attempt, walk the iterator */
             mp_obj_t next = NULL;
             mp_obj_t iter = rt_getiter(rhs);
-            while ((next = rt_iternext(iter)) != mp_const_stop_iteration) {
+            while ((next = rt_iternext(iter)) != MP_OBJ_NULL) {
                 if (mp_obj_equal(next, lhs)) {
                     return mp_const_true;
                 }
@@ -687,7 +487,9 @@ mp_obj_t rt_binary_op(int op, mp_obj_t lhs, mp_obj_t rhs) {
     }
 
     // generic binary_op supplied by type
-    mp_obj_type_t *type = mp_obj_get_type(lhs);
+    mp_obj_type_t *type;
+generic_binary_op:
+    type = mp_obj_get_type(lhs);
     if (type->binary_op != NULL) {
         mp_obj_t result = type->binary_op(op, lhs, rhs);
         if (result != MP_OBJ_NULL) {
@@ -702,47 +504,6 @@ mp_obj_t rt_binary_op(int op, mp_obj_t lhs, mp_obj_t rhs) {
         "unsupported operand types for binary operator: '%s', '%s'",
         mp_obj_get_type_str(lhs), mp_obj_get_type_str(rhs)));
     return mp_const_none;
-}
-
-mp_obj_t rt_make_function_from_id(int unique_code_id, mp_obj_t def_args) {
-    DEBUG_OP_printf("make_function_from_id %d\n", unique_code_id);
-    if (unique_code_id < 1 || unique_code_id >= next_unique_code_id) {
-        // illegal code id
-        return mp_const_none;
-    }
-
-    // make the function, depending on the code kind
-    mp_code_t *c = &unique_codes[unique_code_id];
-    mp_obj_t fun;
-    switch (c->kind) {
-        case MP_CODE_BYTE:
-            fun = mp_obj_new_fun_bc(c->scope_flags, c->arg_names, c->n_args, def_args, c->n_state, c->u_byte.code);
-            break;
-        case MP_CODE_NATIVE:
-            fun = rt_make_function_n(c->n_args, c->u_native.fun);
-            break;
-        case MP_CODE_INLINE_ASM:
-            fun = mp_obj_new_fun_asm(c->n_args, c->u_inline_asm.fun);
-            break;
-        default:
-            assert(0);
-            fun = mp_const_none;
-    }
-
-    // check for generator functions and if so wrap in generator object
-    if ((c->scope_flags & MP_SCOPE_FLAG_GENERATOR) != 0) {
-        fun = mp_obj_new_gen_wrap(fun);
-    }
-
-    return fun;
-}
-
-mp_obj_t rt_make_closure_from_id(int unique_code_id, mp_obj_t closure_tuple) {
-    DEBUG_OP_printf("make_closure_from_id %d\n", unique_code_id);
-    // make function object
-    mp_obj_t ffun = rt_make_function_from_id(unique_code_id, MP_OBJ_NULL);
-    // wrap function in closure object
-    return mp_obj_new_closure(ffun, closure_tuple);
 }
 
 mp_obj_t rt_call_function_0(mp_obj_t fun) {
@@ -780,7 +541,7 @@ mp_obj_t rt_call_function_n_kw(mp_obj_t fun_in, uint n_args, uint n_kw, const mp
     if (type->call != NULL) {
         return type->call(fun_in, n_args, n_kw, args);
     } else {
-        nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_TypeError, "'%s' object is not callable", type->name));
+        nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_TypeError, "'%s' object is not callable", mp_obj_get_type_str(fun_in)));
     }
 }
 
@@ -832,12 +593,12 @@ void rt_unpack_sequence(mp_obj_t seq_in, uint num, mp_obj_t *items) {
 
         for (seq_len = 0; seq_len < num; seq_len++) {
             mp_obj_t el = rt_iternext(iterable);
-            if (el == mp_const_stop_iteration) {
+            if (el == MP_OBJ_NULL) {
                 goto too_short;
             }
             items[num - 1 - seq_len] = el;
         }
-        if (rt_iternext(iterable) != mp_const_stop_iteration) {
+        if (rt_iternext(iterable) != MP_OBJ_NULL) {
             goto too_long;
         }
     }
@@ -899,25 +660,27 @@ STATIC void rt_load_method_maybe(mp_obj_t base, qstr attr, mp_obj_t *dest) {
         } else if (type->load_attr == NULL) {
             // generic method lookup if type didn't provide a specific one
             // this is a lookup in the object (ie not class or type)
-            const mp_method_t *meth = type->methods;
-            if (meth != NULL) {
-                for (; meth->name != NULL; meth++) {
-                    if (strcmp(meth->name, qstr_str(attr)) == 0) {
-                        // check if the methods are functions, static or class methods
-                        // see http://docs.python.org/3.3/howto/descriptor.html
-                        if (MP_OBJ_IS_TYPE(meth->fun, &mp_type_staticmethod)) {
-                            // return just the function
-                            dest[0] = ((mp_obj_static_class_method_t*)meth->fun)->fun;
-                        } else if (MP_OBJ_IS_TYPE(meth->fun, &mp_type_classmethod)) {
-                            // return a bound method, with self being the type of this object
-                            dest[0] = ((mp_obj_static_class_method_t*)meth->fun)->fun;
-                            dest[1] = mp_obj_get_type(base);
-                        } else {
-                            // return a bound method, with self being this object
-                            dest[0] = (mp_obj_t)meth->fun;
-                            dest[1] = base;
-                        }
-                        break;
+            if (type->locals_dict != NULL) {
+                assert(MP_OBJ_IS_TYPE(type->locals_dict, &dict_type)); // Micro Python restriction, for now
+                mp_map_t *locals_map = mp_obj_dict_get_map(type->locals_dict);
+                mp_map_elem_t *elem = mp_map_lookup(locals_map, MP_OBJ_NEW_QSTR(attr), MP_MAP_LOOKUP);
+                if (elem != NULL) {
+                    // check if the methods are functions, static or class methods
+                    // see http://docs.python.org/3.3/howto/descriptor.html
+                    if (MP_OBJ_IS_TYPE(elem->value, &mp_type_staticmethod)) {
+                        // return just the function
+                        dest[0] = ((mp_obj_static_class_method_t*)elem->value)->fun;
+                    } else if (MP_OBJ_IS_TYPE(elem->value, &mp_type_classmethod)) {
+                        // return a bound method, with self being the type of this object
+                        dest[0] = ((mp_obj_static_class_method_t*)elem->value)->fun;
+                        dest[1] = mp_obj_get_type(base);
+                    } else if (mp_obj_is_callable(elem->value)) {
+                        // return a bound method, with self being this object
+                        dest[0] = elem->value;
+                        dest[1] = base;
+                    } else {
+                        // class member is a value, so just return that value
+                        dest[0] = elem->value;
                     }
                 }
             }
@@ -934,7 +697,8 @@ void rt_load_method(mp_obj_t base, qstr attr, mp_obj_t *dest) {
         // no attribute/method called attr
         // following CPython, we give a more detailed error message for type objects
         if (MP_OBJ_IS_TYPE(base, &mp_type_type)) {
-            nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_AttributeError, "type object '%s' has no attribute '%s'", ((mp_obj_type_t*)base)->name, qstr_str(attr)));
+            nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_AttributeError,
+                "type object '%s' has no attribute '%s'", qstr_str(((mp_obj_type_t*)base)->name), qstr_str(attr)));
         } else {
             nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_AttributeError, "'%s' object has no attribute '%s'", mp_obj_get_type_str(base), qstr_str(attr)));
         }
@@ -978,25 +742,71 @@ mp_obj_t rt_getiter(mp_obj_t o_in) {
     if (type->getiter != NULL) {
         return type->getiter(o_in);
     } else {
-        // check for __getitem__ method
+        // check for __iter__ method
         mp_obj_t dest[2];
-        rt_load_method_maybe(o_in, MP_QSTR___getitem__, dest);
+        rt_load_method_maybe(o_in, MP_QSTR___iter__, dest);
         if (dest[0] != MP_OBJ_NULL) {
-            // __getitem__ exists, create an iterator
-            return mp_obj_new_getitem_iter(dest);
+            // __iter__ exists, call it and return its result
+            return rt_call_method_n_kw(0, 0, dest);
         } else {
-            // object not iterable
-            nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_TypeError, "'%s' object is not iterable", type->name));
+            rt_load_method_maybe(o_in, MP_QSTR___getitem__, dest);
+            if (dest[0] != MP_OBJ_NULL) {
+                // __getitem__ exists, create an iterator
+                return mp_obj_new_getitem_iter(dest);
+            } else {
+                // object not iterable
+                nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_TypeError, "'%s' object is not iterable", mp_obj_get_type_str(o_in)));
+            }
         }
     }
 }
 
+// may return MP_OBJ_NULL as an optimisation instead of raise StopIteration()
+// may also raise StopIteration()
+mp_obj_t rt_iternext_allow_raise(mp_obj_t o_in) {
+    mp_obj_type_t *type = mp_obj_get_type(o_in);
+    if (type->iternext != NULL) {
+        return type->iternext(o_in);
+    } else {
+        // check for __next__ method
+        mp_obj_t dest[2];
+        rt_load_method_maybe(o_in, MP_QSTR___next__, dest);
+        if (dest[0] != MP_OBJ_NULL) {
+            // __next__ exists, call it and return its result
+            return rt_call_method_n_kw(0, 0, dest);
+        } else {
+            nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_TypeError, "'%s' object is not an iterator", mp_obj_get_type_str(o_in)));
+        }
+    }
+}
+
+// will always return MP_OBJ_NULL instead of raising StopIteration() (or any subclass thereof)
+// may raise other exceptions
 mp_obj_t rt_iternext(mp_obj_t o_in) {
     mp_obj_type_t *type = mp_obj_get_type(o_in);
     if (type->iternext != NULL) {
         return type->iternext(o_in);
     } else {
-        nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_TypeError, "'%s' object is not an iterator", type->name));
+        // check for __next__ method
+        mp_obj_t dest[2];
+        rt_load_method_maybe(o_in, MP_QSTR___next__, dest);
+        if (dest[0] != MP_OBJ_NULL) {
+            // __next__ exists, call it and return its result
+            nlr_buf_t nlr;
+            if (nlr_push(&nlr) == 0) {
+                mp_obj_t ret = rt_call_method_n_kw(0, 0, dest);
+                nlr_pop();
+                return ret;
+            } else {
+                if (mp_obj_is_subclass_fast(mp_obj_get_type(nlr.ret_val), &mp_type_StopIteration)) {
+                    return MP_OBJ_NULL;
+                } else {
+                    nlr_jump(nlr.ret_val);
+                }
+            }
+        } else {
+            nlr_jump(mp_obj_new_exception_msg_varg(&mp_type_TypeError, "'%s' object is not an iterator", mp_obj_get_type_str(o_in)));
+        }
     }
 }
 
@@ -1071,10 +881,6 @@ mp_map_t *rt_globals_get(void) {
 void rt_globals_set(mp_map_t *m) {
     DEBUG_OP_printf("rt_globals_set(%p)\n", m);
     map_globals = m;
-}
-
-mp_map_t *rt_loaded_modules_get(void) {
-    return &map_loaded_modules;
 }
 
 // these must correspond to the respective enum

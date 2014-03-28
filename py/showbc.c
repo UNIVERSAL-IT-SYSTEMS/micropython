@@ -1,7 +1,4 @@
-#include <stdint.h>
-#include <stdlib.h>
 #include <stdio.h>
-#include <string.h>
 #include <assert.h>
 
 #include "misc.h"
@@ -11,10 +8,20 @@
 
 #if MICROPY_DEBUG_PRINTERS
 
-#define DECODE_UINT do { unum = *ip++; if (unum > 127) { unum = ((unum & 0x3f) << 8) | (*ip++); } } while (0)
+#define DECODE_UINT { \
+    unum = 0; \
+    do { \
+        unum = (unum << 7) + (*ip & 0x7f); \
+    } while ((*ip++ & 0x80) != 0); \
+}
 #define DECODE_ULABEL do { unum = (ip[0] | (ip[1] << 8)); ip += 2; } while (0)
 #define DECODE_SLABEL do { unum = (ip[0] | (ip[1] << 8)) - 0x8000; ip += 2; } while (0)
-#define DECODE_QSTR do { qstr = *ip++; if (qstr > 127) { qstr = ((qstr & 0x3f) << 8) | (*ip++); } } while (0)
+#define DECODE_QSTR { \
+    qstr = 0; \
+    do { \
+        qstr = (qstr << 7) + (*ip & 0x7f); \
+    } while ((*ip++ & 0x80) != 0); \
+}
 
 void mp_byte_code_print(const byte *ip, int len) {
     const byte *ip_start = ip;
@@ -58,7 +65,7 @@ void mp_byte_code_print(const byte *ip, int len) {
                 break;
 
             case MP_BC_LOAD_CONST_SMALL_INT: {
-                int num = 0;
+                machine_int_t num = 0;
                 if ((ip[0] & 0x40) != 0) {
                     // Number is negative
                     num--;
@@ -66,7 +73,7 @@ void mp_byte_code_print(const byte *ip, int len) {
                 do {
                     num = (num << 7) | (*ip & 0x7f);
                 } while ((*ip++ & 0x80) != 0);
-                printf("LOAD_CONST_SMALL_INT %d", num);
+                printf("LOAD_CONST_SMALL_INT " INT_FMT, num);
                 break;
             }
 
@@ -237,6 +244,15 @@ void mp_byte_code_print(const byte *ip, int len) {
                 printf("SETUP_LOOP " UINT_FMT, ip + unum - ip_start);
                 break;
 
+            case MP_BC_SETUP_WITH:
+                DECODE_ULABEL; // loop-like labels are always forward
+                printf("SETUP_WITH " UINT_FMT, ip + unum - ip_start);
+                break;
+
+            case MP_BC_WITH_CLEANUP:
+                printf("WITH_CLEANUP");
+                break;
+
             case MP_BC_UNWIND_JUMP:
                 DECODE_SLABEL;
                 printf("UNWIND_JUMP " UINT_FMT " %d", ip + unum - ip_start, *ip);
@@ -364,6 +380,11 @@ void mp_byte_code_print(const byte *ip, int len) {
                 printf("MAKE_CLOSURE " UINT_FMT, unum);
                 break;
 
+            case MP_BC_MAKE_CLOSURE_DEFARGS:
+                DECODE_UINT;
+                printf("MAKE_CLOSURE_DEFARGS " UINT_FMT, unum);
+                break;
+
             case MP_BC_CALL_FUNCTION:
                 DECODE_UINT;
                 printf("CALL_FUNCTION n=" UINT_FMT " nkw=" UINT_FMT, unum & 0xff, (unum >> 8) & 0xff);
@@ -385,6 +406,10 @@ void mp_byte_code_print(const byte *ip, int len) {
 
             case MP_BC_YIELD_VALUE:
                 printf("YIELD_VALUE");
+                break;
+
+            case MP_BC_YIELD_FROM:
+                printf("YIELD_FROM");
                 break;
 
             case MP_BC_IMPORT_NAME:

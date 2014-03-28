@@ -1,8 +1,11 @@
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include "nlr.h"
 #include "misc.h"
@@ -12,6 +15,7 @@
 #include "lexerunix.h"
 #include "parse.h"
 #include "obj.h"
+#include "map.h"
 #include "parsehelper.h"
 #include "compile.h"
 #include "runtime0.h"
@@ -24,9 +28,10 @@
 #include <readline/history.h>
 #endif
 
+#if MICROPY_ENABLE_GC
 // Heap size of GC heap (if enabled)
-// TODO: allow to specify on command line
-#define HEAP_SIZE 128*1024
+long heap_size = 128*1024;
+#endif
 
 // Stack top at the start of program
 void *stack_top;
@@ -187,17 +192,18 @@ static mp_obj_t test_set(mp_obj_t self_in, mp_obj_t arg) {
 static MP_DEFINE_CONST_FUN_OBJ_1(test_get_obj, test_get);
 static MP_DEFINE_CONST_FUN_OBJ_2(test_set_obj, test_set);
 
-static const mp_method_t test_methods[] = {
-    { "get", &test_get_obj },
-    { "set", &test_set_obj },
-    { NULL, NULL },
+static const mp_map_elem_t test_locals_dict_table[] = {
+    { MP_OBJ_NEW_QSTR(MP_QSTR_get), (mp_obj_t)&test_get_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_set), (mp_obj_t)&test_set_obj },
 };
+
+STATIC MP_DEFINE_CONST_DICT(test_locals_dict, test_locals_dict_table);
 
 static const mp_obj_type_t test_type = {
     { &mp_type_type },
     .name = MP_QSTR_Test,
     .print = test_print,
-    .methods = test_methods,
+    .locals_dict = (mp_obj_t)&test_locals_dict,
 };
 
 mp_obj_t test_obj_new(int value) {
@@ -208,7 +214,12 @@ mp_obj_t test_obj_new(int value) {
 }
 
 int usage(void) {
-    printf("usage: py [-c <command>] [<filename>]\n");
+    printf(
+"usage: py [-X <opt>] [-c <command>] [<filename>]\n"
+"\n"
+"Implementation specific options:\n"
+"  heapsize=<n> -- set the heap size for the GC\n"
+);
     return 1;
 }
 
@@ -233,13 +244,37 @@ static mp_obj_t pyb_gc(void) {
 MP_DEFINE_CONST_FUN_OBJ_0(pyb_gc_obj, pyb_gc);
 #endif
 
+// Process options which set interpreter init options
+void pre_process_options(int argc, char **argv) {
+    for (int a = 1; a < argc; a++) {
+        if (argv[a][0] == '-') {
+            if (strcmp(argv[a], "-X") == 0) {
+                if (a + 1 >= argc) {
+                    exit(usage());
+                }
+                if (0) {
+#if MICROPY_ENABLE_GC
+                } else if (strncmp(argv[a + 1], "heapsize=", sizeof("heapsize=") - 1) == 0) {
+                    heap_size = strtol(argv[a + 1] + sizeof("heapsize=") - 1, NULL, 0);
+#endif
+                } else {
+                    exit(usage());
+                }
+                a++;
+            }
+        }
+    }
+}
+
 int main(int argc, char **argv) {
     volatile int stack_dummy;
     stack_top = (void*)&stack_dummy;
 
+    pre_process_options(argc, argv);
+
 #if MICROPY_ENABLE_GC
-    char *heap = malloc(HEAP_SIZE);
-    gc_init(heap, heap + HEAP_SIZE);
+    char *heap = malloc(heap_size);
+    gc_init(heap, heap + heap_size);
 #endif
 
     qstr_init();
@@ -319,35 +354,40 @@ int main(int argc, char **argv) {
     printf("    peak  %d\n", m_get_peak_bytes_allocated());
     */
 
-    if (argc == 1) {
-        do_repl();
-    } else {
-        for (int a = 1; a < argc; a++) {
-            if (argv[a][0] == '-') {
-                if (strcmp(argv[a], "-c") == 0) {
-                    if (a + 1 >= argc) {
-                        return usage();
-                    }
-                    do_str(argv[a + 1]);
-                    a += 1;
-                } else {
+    bool executed = false;
+    for (int a = 1; a < argc; a++) {
+        if (argv[a][0] == '-') {
+            if (strcmp(argv[a], "-c") == 0) {
+                if (a + 1 >= argc) {
                     return usage();
                 }
+                do_str(argv[a + 1]);
+                executed = true;
+                a += 1;
+            } else if (strcmp(argv[a], "-X") == 0) {
+                a += 1;
             } else {
-                // Set base dir of the script as first entry in sys.path
-                char *basedir = realpath(argv[a], NULL);
-                if (basedir != NULL) {
-                    char *p = strrchr(basedir, '/');
-                    path_items[0] = MP_OBJ_NEW_QSTR(qstr_from_strn(basedir, p - basedir));
-                    free(basedir);
-                }
-                for (int i = a; i < argc; i++) {
-                    rt_list_append(py_argv, MP_OBJ_NEW_QSTR(qstr_from_str(argv[i])));
-                }
-                do_file(argv[a]);
-                break;
+                return usage();
             }
+        } else {
+            // Set base dir of the script as first entry in sys.path
+            char *basedir = realpath(argv[a], NULL);
+            if (basedir != NULL) {
+                char *p = strrchr(basedir, '/');
+                path_items[0] = MP_OBJ_NEW_QSTR(qstr_from_strn(basedir, p - basedir));
+                free(basedir);
+            }
+            for (int i = a; i < argc; i++) {
+                rt_list_append(py_argv, MP_OBJ_NEW_QSTR(qstr_from_str(argv[i])));
+            }
+            do_file(argv[a]);
+            executed = true;
+            break;
         }
+    }
+
+    if (!executed) {
+        do_repl();
     }
 
     rt_deinit();
@@ -355,14 +395,6 @@ int main(int argc, char **argv) {
     //printf("total bytes = %d\n", m_get_total_bytes_allocated());
     return 0;
 }
-
-// for sqrt
-#include <math.h>
-machine_float_t machine_sqrt(machine_float_t x) {
-    return sqrt(x);
-}
-
-#include <sys/stat.h>
 
 uint mp_import_stat(const char *path) {
     struct stat st;

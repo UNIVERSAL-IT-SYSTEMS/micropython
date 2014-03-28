@@ -1,5 +1,4 @@
 #include <stdlib.h>
-#include <stdint.h>
 
 #include "nlr.h"
 #include "misc.h"
@@ -57,7 +56,7 @@ STATIC mp_obj_t range_it_iternext(mp_obj_t o_in) {
         o->cur += o->step;
         return o_out;
     } else {
-        return mp_const_stop_iteration;
+        return MP_OBJ_NULL;
     }
 }
 

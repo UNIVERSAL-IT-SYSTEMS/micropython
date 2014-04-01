@@ -6,6 +6,7 @@ QSTR_DEFS = qstrdefsport.h
 # include py core make definitions
 include ../py/py.mk
 
+BUILD=$(PWD)/../../build
 CMSIS_DIR=cmsis
 STMPERIPH_DIR=stmperiph
 STMUSB_DIR=stmusb

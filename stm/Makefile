@@ -24,7 +24,7 @@ DFU=../tools/dfu.py
 CROSS_COMPILE = arm-none-eabi-
 
 CFLAGS_CORTEX_M4 = -mthumb -mtune=cortex-m4 -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -fsingle-precision-constant -Wdouble-promotion
-CFLAGS = -I. -I$(PY_SRC) -I$(CMSIS_DIR) -I$(STMPERIPH_DIR) -I$(STMUSB_DIR)  -Wall -ansi -std=gnu99 $(CFLAGS_CORTEX_M4) $(COPT)
+CFLAGS = -I../.. -I. -I$(PY_SRC) -I$(CMSIS_DIR) -I$(STMPERIPH_DIR) -I$(STMUSB_DIR)  -Wall -ansi -std=gnu99 $(CFLAGS_CORTEX_M4) $(COPT)
 #-I$(STM_ETH_DIR) -I$(FREERTOS_DIR) -I$(PICOTCP_SUPPORT_DIR) -I$(PICOTCP_INC)
 
 # -Werror

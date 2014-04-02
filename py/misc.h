@@ -90,6 +90,7 @@ bool vstr_shrink(vstr_t *vstr);
 char *vstr_add_len(vstr_t *vstr, int len);
 void vstr_add_byte(vstr_t *vstr, byte v);
 void vstr_add_char(vstr_t *vstr, unichar chr);
+void vstr_del_char(vstr_t *vstr);
 void vstr_add_str(vstr_t *vstr, const char *str);
 void vstr_add_strn(vstr_t *vstr, const char *str, int len);
 //void vstr_add_le16(vstr_t *vstr, unsigned short v);

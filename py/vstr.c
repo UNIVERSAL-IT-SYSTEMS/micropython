@@ -177,6 +177,11 @@ void vstr_add_char(vstr_t *vstr, unichar c) {
     buf[0] = c;
 }
 
+void vstr_del_char(vstr_t *vstr)
+{
+    vstr->buf[vstr->len--] = (char)0;
+}
+
 void vstr_add_str(vstr_t *vstr, const char *str) {
     vstr_add_strn(vstr, str, strlen(str));
 }

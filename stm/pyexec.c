@@ -84,6 +84,13 @@ int readline(vstr_t *line, const char *prompt) {
                 }
                 readline_hist[0] = str_dup(vstr_str(line));
                 return 0;
+            } else if (c == 8) {
+                int i;
+                if (line->len > 0) {
+                    // erase char
+                    stdout_tx_str("\b \b");
+                    vstr_del_char(line);
+                }
             } else if (c == 27) {
                 escape = true;
             } else if (c == 127) {

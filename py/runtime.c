@@ -38,7 +38,7 @@ STATIC void mp_map_add_qstr(mp_map_t *map, qstr qstr, mp_obj_t value) {
     mp_map_lookup(map, MP_OBJ_NEW_QSTR(qstr), MP_MAP_LOOKUP_ADD_IF_NOT_FOUND)->value = value;
 }
 
-void mp_init(void) {
+void microp_init(void) {
     mp_emit_glue_init();
 
     // locals = globals for outer module (see Objects/frameobject.c/PyFrame_New())
@@ -65,7 +65,7 @@ void mp_init(void) {
     //mp_store_attr(m_sys, MP_QSTR_path, mp_sys_path);
 }
 
-void mp_deinit(void) {
+void microp_deinit(void) {
     mp_map_free(map_globals);
     mp_map_deinit(&map_builtins);
     mp_module_deinit();

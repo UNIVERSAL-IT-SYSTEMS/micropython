@@ -4,8 +4,8 @@ typedef enum {
     MP_VM_RETURN_EXCEPTION,
 } mp_vm_return_kind_t;
 
-void mp_init(void);
-void mp_deinit(void);
+void microp_init(void);
+void microp_deinit(void);
 
 void mp_check_nargs(int n_args, machine_uint_t n_args_min, machine_uint_t n_args_max, int n_kw, bool is_kw);
 

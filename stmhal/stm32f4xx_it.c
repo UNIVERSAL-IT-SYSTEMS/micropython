@@ -87,7 +87,7 @@ void NMI_Handler(void)
   * @param  None
   * @retval None
   */
-void HardFault_Handler(void)
+void micropy_HardFault_Handler(void)
 {
   /* Go to infinite loop when Hard Fault exception occurs */
   while (1)
@@ -143,7 +143,7 @@ void UsageFault_Handler(void)
   * @param  None
   * @retval None
   */
-void SVC_Handler(void)
+void micropy_SVC_Handler(void)
 {
 }
 
@@ -161,7 +161,7 @@ void DebugMon_Handler(void)
   * @param  None
   * @retval None
   */
-void PendSV_Handler(void)
+void micropy_PendSV_Handler(void)
 {
     extern void pendsv_isr_handler(void);
     pendsv_isr_handler();
@@ -172,7 +172,7 @@ void PendSV_Handler(void)
   * @param  None
   * @retval None
   */
-void SysTick_Handler(void)
+void micropy_SysTick_Handler(void)
 {
     HAL_IncTick();
 }

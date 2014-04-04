@@ -6,6 +6,7 @@ QSTR_DEFS = qstrdefsport.h
 # include py core make definitions
 include ../py/py.mk
 
+BUILD=$(PWD)/../../build
 CMSIS_DIR=cmsis
 HAL_DIR=hal
 USBDEV_DIR=usbdev
@@ -26,16 +27,22 @@ INC += -I$(USBDEV_DIR)/core/inc -I$(USBDEV_DIR)/class/cdc_msc_hid/inc
 INC += -I$(FATFS_DIR)/src
 #INC += -I$(CC3K_DIR)
 
-CFLAGS_CORTEX_M4 = -mthumb -mtune=cortex-m4 -mabi=aapcs-linux -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -fsingle-precision-constant -Wdouble-promotion
-CFLAGS = $(INC) -Wall -Werror -ansi -std=gnu99 $(CFLAGS_CORTEX_M4) $(COPT)
 
-BOARD ?= PYBV10
+CFLAGS_CORTEX_M4 = -mthumb -mtune=cortex-m4 -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -fsingle-precision-constant -Wdouble-promotion
+CFLAGS = -I../.. -I. -I$(PY_SRC) -I$(CMSIS_DIR) -I$(STMPERIPH_DIR) -I$(STMUSB_DIR)  -Wall -ansi -std=gnu99 $(CFLAGS_CORTEX_M4) $(COPT) $(INC)
+
+
+#CFLAGS_CORTEX_M4 = -mthumb -mtune=cortex-m4 -mabi=aapcs-linux -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -fsingle-precision-constant -Wdouble-promotion
+#CFLAGS = $(INC) -Wall -Werror -ansi -std=gnu99 $(CFLAGS_CORTEX_M4) $(COPT)
+
+BOARD ?= STM32F4DISC
 ifeq ($(wildcard boards/$(BOARD)/.),)
 $(error Invalid BOARD specified)
 endif
 CFLAGS += -Iboards/$(BOARD)
 
 #Debugging/Optimization
+DEBUG?=1
 ifeq ($(DEBUG), 1)
 CFLAGS += -g -DPENDSV_DEBUG
 COPT = -O0
@@ -50,7 +57,6 @@ LIBS =
 #LIBS += $(shell $(CC) -print-libgcc-file-name)
 
 SRC_C = \
-	main.c \
 	string0.c \
 	system_stm32f4xx.c \
 	stm32f4xx_it.c \
@@ -99,6 +105,7 @@ SRC_C = \
 	adc.c \
 	i2c.c \
 
+#	timer.c \
 #	pybwlan.c \
 
 SRC_S = \
@@ -129,6 +136,7 @@ SRC_HAL = $(addprefix $(HAL_DIR)/src/,\
 	stm32f4xx_hal_uart.c \
 	stm32f4xx_ll_sdmmc.c \
 	stm32f4xx_ll_usb.c \
+    stm32f4xx_hal_eth.c \
 	)
 
 SRC_USBDEV = $(addprefix $(USBDEV_DIR)/,\
@@ -185,7 +193,15 @@ OBJ += $(addprefix $(BUILD)/, $(SRC_FATFS:.c=.o))
 #OBJ += $(addprefix $(BUILD)/, $(SRC_CC3K:.c=.o))
 OBJ += $(BUILD)/pins_$(BOARD).o
 
-all: $(BUILD)/flash.dfu
+all: $(BUILD)/lib/libmicropython.a
+
+
+$(BUILD)/lib/libmicropython.a: $(OBJ) 
+	$(ECHO) "LINK $@"
+	@mkdir -p $(dir $@)
+	$(Q)$(AR) cru $@ $< $(OBJ) $(LIBS)
+	$(Q)$(RANLIB) $@ 
+	$(Q)$(SIZE) -t $@
 
 $(BUILD)/flash.dfu: $(BUILD)/flash0.bin $(BUILD)/flash1.bin
 	$(ECHO) "Create $@"

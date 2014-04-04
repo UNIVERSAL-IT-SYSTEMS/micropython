@@ -128,3 +128,26 @@ Q(sleep)
 
 // for input
 Q(input)
+
+// for PicoTCP Socket module
+Q(socket)
+Q(fileno)
+Q(makefile)
+Q(connect)
+Q(bind)
+Q(listen)
+Q(accept)
+Q(recv)
+Q(setsockopt)
+Q(getsockopt)
+Q(getsockname)
+Q(sockaddr_in)
+Q(htons)
+Q(inet_aton)
+Q(gethostbyname)
+Q(getaddrinfo)
+
+// The thread module
+Q(thread)
+Q(run)
+Q(kill)

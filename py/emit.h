@@ -54,7 +54,6 @@ typedef struct _emit_method_table_t {
     void (*store_global)(emit_t *emit, qstr qstr);
     void (*store_attr)(emit_t *emit, qstr qstr);
     void (*store_subscr)(emit_t *emit);
-    void (*store_locals)(emit_t *emit);
     void (*delete_fast)(emit_t *emit, qstr qstr, int local_num);
     void (*delete_deref)(emit_t *emit, qstr qstr, int local_num);
     void (*delete_name)(emit_t *emit, qstr qstr);
@@ -84,8 +83,8 @@ typedef struct _emit_method_table_t {
     void (*for_iter_end)(emit_t *emit);
     void (*pop_block)(emit_t *emit);
     void (*pop_except)(emit_t *emit);
-    void (*unary_op)(emit_t *emit, rt_unary_op_t op);
-    void (*binary_op)(emit_t *emit, rt_binary_op_t op);
+    void (*unary_op)(emit_t *emit, mp_unary_op_t op);
+    void (*binary_op)(emit_t *emit, mp_binary_op_t op);
     void (*build_tuple)(emit_t *emit, int n_args);
     void (*build_list)(emit_t *emit, int n_args);
     void (*list_append)(emit_t *emit, int list_stack_index);
@@ -97,8 +96,8 @@ typedef struct _emit_method_table_t {
     void (*build_slice)(emit_t *emit, int n_args);
     void (*unpack_sequence)(emit_t *emit, int n_args);
     void (*unpack_ex)(emit_t *emit, int n_left, int n_right);
-    void (*make_function)(emit_t *emit, scope_t *scope, int n_dict_params, int n_default_params);
-    void (*make_closure)(emit_t *emit, scope_t *scope, int n_dict_params, int n_default_params);
+    void (*make_function)(emit_t *emit, scope_t *scope, uint n_pos_defaults, uint n_kw_defaults);
+    void (*make_closure)(emit_t *emit, scope_t *scope, uint n_pos_defaults, uint n_kw_defaults);
     void (*call_function)(emit_t *emit, int n_positional, int n_keyword, bool have_star_arg, bool have_dbl_star_arg);
     void (*call_method)(emit_t *emit, int n_positional, int n_keyword, bool have_star_arg, bool have_dbl_star_arg);
     void (*return_value)(emit_t *emit);

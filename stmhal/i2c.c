@@ -8,7 +8,6 @@
 #include "mpconfig.h"
 #include "qstr.h"
 #include "obj.h"
-#include "map.h"
 #include "runtime.h"
 #include "i2c.h"
 
@@ -80,7 +79,7 @@ STATIC pyb_i2c_obj_t pyb_i2c_obj[PYB_NUM_I2C] = {{{&pyb_i2c_type}, &I2cHandle_X}
 
 STATIC mp_obj_t pyb_i2c_make_new(mp_obj_t type_in, uint n_args, uint n_kw, const mp_obj_t *args) {
     // check arguments
-    rt_check_nargs(n_args, 1, 1, n_kw, false);
+    mp_check_nargs(n_args, 1, 1, n_kw, false);
 
     // get i2c number
     machine_int_t i2c_id = mp_obj_get_int(args[0]) - 1;
@@ -124,7 +123,7 @@ STATIC mp_obj_t pyb_i2c_mem_read(uint n_args, const mp_obj_t *args) {
     machine_uint_t n = mp_obj_get_int(args[3]);
 
     byte *data;
-    mp_obj_t o = mp_obj_str_builder_start(&bytes_type, n, &data);
+    mp_obj_t o = mp_obj_str_builder_start(&mp_type_bytes, n, &data);
     HAL_StatusTypeDef status = HAL_I2C_Mem_Read(self->i2c_handle, i2c_addr, mem_addr, I2C_MEMADD_SIZE_8BIT, data, n, 200);
 
     //printf("Read got %d\n", status);

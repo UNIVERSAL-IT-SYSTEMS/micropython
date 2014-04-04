@@ -1,32 +1,36 @@
 #include <stdio.h>
 #include <stm32f4xx_hal.h>
-#include "usbd_cdc_msc.h"
-#include "usbd_cdc_interface.h"
 
 #include "nlr.h"
 #include "misc.h"
 #include "mpconfig.h"
 #include "qstr.h"
 #include "obj.h"
-#include "map.h"
 #include "runtime.h"
+#include "timer.h"
 #include "led.h"
 #include "pin.h"
 #include "build/pins.h"
 
-static const pin_obj_t *gLed[] = {
-    &PYB_LED1,
-#if defined(PYB_LED2)
-    &PYB_LED2,
-#if defined(PYB_LED3)
-    &PYB_LED3,
-#if defined(PYB_LED4)
-    &PYB_LED4,
+typedef struct _pyb_led_obj_t {
+    mp_obj_base_t base;
+    machine_uint_t led_id;
+    const pin_obj_t *led_pin;
+} pyb_led_obj_t;
+
+STATIC const pyb_led_obj_t pyb_led_obj[] = {
+    {{&pyb_led_type}, 1, &MICROPY_HW_LED1},
+#if defined(MICROPY_HW_LED2)
+    {{&pyb_led_type}, 2, &MICROPY_HW_LED2},
+#if defined(MICROPY_HW_LED3)
+    {{&pyb_led_type}, 3, &MICROPY_HW_LED3},
+#if defined(MICROPY_HW_LED4)
+    {{&pyb_led_type}, 4, &MICROPY_HW_LED4},
 #endif
 #endif
 #endif
 };
-#define NUM_LEDS (sizeof(gLed) / sizeof(gLed[0]))
+#define NUM_LEDS (sizeof(pyb_led_obj) / sizeof(pyb_led_obj[0]))
 
 void led_init(void) {
     /* GPIO structure */
@@ -34,27 +38,30 @@ void led_init(void) {
 
     /* Configure I/O speed, mode, output type and pull */
     GPIO_InitStructure.Speed = GPIO_SPEED_LOW;
-    GPIO_InitStructure.Mode = PYB_OTYPE;
+    GPIO_InitStructure.Mode = MICROPY_HW_LED_OTYPE;
     GPIO_InitStructure.Pull = GPIO_NOPULL;
 
     /* Turn off LEDs and initialize */
     for (int led = 0; led < NUM_LEDS; led++) {
-        PYB_LED_OFF(gLed[led]);
-        GPIO_InitStructure.Pin = gLed[led]->pin_mask;
-        HAL_GPIO_Init(gLed[led]->gpio, &GPIO_InitStructure);
+        const pin_obj_t *led_pin = pyb_led_obj[led].led_pin;
+        MICROPY_HW_LED_OFF(led_pin);
+        GPIO_InitStructure.Pin = led_pin->pin_mask;
+        HAL_GPIO_Init(led_pin->gpio, &GPIO_InitStructure);
     }
 
-#if defined(PYBOARD4) || defined(PYBv10)
+#if defined(PYBV4) || defined(PYBV10)
     // LED4 (blue) is on PB4 which is TIM3_CH1
     // we use PWM on this channel to fade the LED
 
+    // LED3 (yellow) is on PA15 which has TIM2_CH1, so we could PWM that as well
+
     // GPIO configuration
-    GPIO_InitStructure.Pin = PYB_LED4.pin_mask;
+    GPIO_InitStructure.Pin = MICROPY_HW_LED4.pin_mask;
     GPIO_InitStructure.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStructure.Speed = GPIO_SPEED_FAST;
     GPIO_InitStructure.Pull = GPIO_NOPULL;
     GPIO_InitStructure.Alternate = GPIO_AF2_TIM3;
-    HAL_GPIO_Init(PYB_LED4.gpio, &GPIO_InitStructure);
+    HAL_GPIO_Init(MICROPY_HW_LED4.gpio, &GPIO_InitStructure);
 
     // PWM mode configuration
     TIM_OC_InitTypeDef oc_init;
@@ -73,7 +80,7 @@ void led_state(pyb_led_t led, int state) {
     if (led < 1 || led > NUM_LEDS) {
         return;
     }
-#if defined(PYBOARD4) || defined(PYBv10)
+#if defined(PYBV4) || defined(PYBV10)
     if (led == 4) {
         if (state) {
             TIM3->CCR1 = 0xffff;
@@ -83,14 +90,14 @@ void led_state(pyb_led_t led, int state) {
         return;
     }
 #endif
-    const pin_obj_t *led_pin = gLed[led - 1];
+    const pin_obj_t *led_pin = pyb_led_obj[led - 1].led_pin;
     //printf("led_state(%d,%d)\n", led, state);
     if (state == 0) {
         // turn LED off
-        PYB_LED_OFF(led_pin);
+        MICROPY_HW_LED_OFF(led_pin);
     } else {
         // turn LED on
-        PYB_LED_ON(led_pin);
+        MICROPY_HW_LED_ON(led_pin);
     }
 }
 
@@ -99,7 +106,7 @@ void led_toggle(pyb_led_t led) {
         return;
     }
 
-#if defined(PYBOARD4) || defined(PYBv10)
+#if defined(PYBV4) || defined(PYBV10)
     if (led == 4) {
         if (TIM3->CCR1 == 0) {
             TIM3->CCR1 = 0xffff;
@@ -110,7 +117,7 @@ void led_toggle(pyb_led_t led) {
     }
 #endif
 
-    const pin_obj_t *led_pin = gLed[led - 1];
+    const pin_obj_t *led_pin = pyb_led_obj[led - 1].led_pin;
     GPIO_TypeDef *gpio = led_pin->gpio;
 
     // We don't know if we're turning the LED on or off, but we don't really
@@ -129,7 +136,7 @@ int led_get_intensity(pyb_led_t led) {
         return 0;
     }
 
-#if defined(PYBOARD4) || defined(PYBv10)
+#if defined(PYBV4) || defined(PYBV10)
     if (led == 4) {
         machine_uint_t i = TIM3->CCR1 * 255 / ((USBD_CDC_POLLING_INTERVAL*1000) - 1);
         if (i > 255) {
@@ -139,7 +146,7 @@ int led_get_intensity(pyb_led_t led) {
     }
 #endif
 
-    const pin_obj_t *led_pin = gLed[led - 1];
+    const pin_obj_t *led_pin = pyb_led_obj[led - 1].led_pin;
     GPIO_TypeDef *gpio = led_pin->gpio;
 
     // TODO convert high/low to on/off depending on board
@@ -153,7 +160,7 @@ int led_get_intensity(pyb_led_t led) {
 }
 
 void led_set_intensity(pyb_led_t led, machine_int_t intensity) {
-#if defined(PYBOARD4) || defined(PYBv10)
+#if defined(PYBV4) || defined(PYBV10)
     if (led == 4) {
         // set intensity using PWM pulse width
         if (intensity < 0) {
@@ -183,24 +190,6 @@ void led_debug(int n, int delay) {
 /******************************************************************************/
 /* Micro Python bindings                                                      */
 
-typedef struct _pyb_led_obj_t {
-    mp_obj_base_t base;
-    machine_uint_t led_id;
-} pyb_led_obj_t;
-
-STATIC const pyb_led_obj_t pyb_led_obj[NUM_LEDS] = {
-    {{&pyb_led_type}, 1},
-#if defined(PYB_LED2)
-    {{&pyb_led_type}, 2},
-#if defined(PYB_LED3)
-    {{&pyb_led_type}, 3},
-#if defined(PYB_LED4)
-    {{&pyb_led_type}, 4},
-#endif
-#endif
-#endif
-};
-
 void led_obj_print(void (*print)(void *env, const char *fmt, ...), void *env, mp_obj_t self_in, mp_print_kind_t kind) {
     pyb_led_obj_t *self = self_in;
     print(env, "<LED %lu>", self->led_id);
@@ -208,7 +197,7 @@ void led_obj_print(void (*print)(void *env, const char *fmt, ...), void *env, mp
 
 STATIC mp_obj_t led_obj_make_new(mp_obj_t type_in, uint n_args, uint n_kw, const mp_obj_t *args) {
     // check arguments
-    rt_check_nargs(n_args, 1, 1, n_kw, false);
+    mp_check_nargs(n_args, 1, 1, n_kw, false);
 
     // get led number
     machine_int_t led_id = mp_obj_get_int(args[0]) - 1;

@@ -399,6 +399,11 @@ STATIC void emit_bc_load_const_verbatim_str(emit_t *emit, const char *str) {
     assert(0);
 }
 
+STATIC void emit_bc_load_null(emit_t *emit) {
+    emit_bc_pre(emit, 1);
+    emit_write_byte_code_byte(emit, MP_BC_LOAD_NULL);
+};
+
 STATIC void emit_bc_load_fast(emit_t *emit, qstr qstr, int local_num) {
     assert(local_num >= 0);
     emit_bc_pre(emit, 1);
@@ -479,12 +484,6 @@ STATIC void emit_bc_store_attr(emit_t *emit, qstr qstr) {
 STATIC void emit_bc_store_subscr(emit_t *emit) {
     emit_bc_pre(emit, -3);
     emit_write_byte_code_byte(emit, MP_BC_STORE_SUBSCR);
-}
-
-STATIC void emit_bc_store_locals(emit_t *emit) {
-    // not needed
-    emit_bc_pre(emit, -1);
-    emit_write_byte_code_byte(emit, MP_BC_POP_TOP);
 }
 
 STATIC void emit_bc_delete_fast(emit_t *emit, qstr qstr, int local_num) {
@@ -632,10 +631,10 @@ STATIC void emit_bc_pop_except(emit_t *emit) {
     emit_write_byte_code_byte(emit, MP_BC_POP_EXCEPT);
 }
 
-STATIC void emit_bc_unary_op(emit_t *emit, rt_unary_op_t op) {
-    if (op == RT_UNARY_OP_NOT) {
+STATIC void emit_bc_unary_op(emit_t *emit, mp_unary_op_t op) {
+    if (op == MP_UNARY_OP_NOT) {
         emit_bc_pre(emit, 0);
-        emit_write_byte_code_byte_byte(emit, MP_BC_UNARY_OP, RT_UNARY_OP_BOOL);
+        emit_write_byte_code_byte_byte(emit, MP_BC_UNARY_OP, MP_UNARY_OP_BOOL);
         emit_bc_pre(emit, 0);
         emit_write_byte_code_byte(emit, MP_BC_NOT);
     } else {
@@ -644,14 +643,14 @@ STATIC void emit_bc_unary_op(emit_t *emit, rt_unary_op_t op) {
     }
 }
 
-STATIC void emit_bc_binary_op(emit_t *emit, rt_binary_op_t op) {
+STATIC void emit_bc_binary_op(emit_t *emit, mp_binary_op_t op) {
     bool invert = false;
-    if (op == RT_BINARY_OP_NOT_IN) {
+    if (op == MP_BINARY_OP_NOT_IN) {
         invert = true;
-        op = RT_BINARY_OP_IN;
-    } else if (op == RT_BINARY_OP_IS_NOT) {
+        op = MP_BINARY_OP_IN;
+    } else if (op == MP_BINARY_OP_IS_NOT) {
         invert = true;
-        op = RT_BINARY_OP_IS;
+        op = MP_BINARY_OP_IS;
     }
     emit_bc_pre(emit, -1);
     emit_write_byte_code_byte_byte(emit, MP_BC_BINARY_OP, op);
@@ -726,78 +725,67 @@ STATIC void emit_bc_unpack_ex(emit_t *emit, int n_left, int n_right) {
     emit_write_byte_code_byte_uint(emit, MP_BC_UNPACK_EX, n_left | (n_right << 8));
 }
 
-STATIC void emit_bc_make_function(emit_t *emit, scope_t *scope, int n_dict_params, int n_default_params) {
-    assert(n_dict_params == 0);
-    if (n_default_params == 0) {
+STATIC void emit_bc_make_function(emit_t *emit, scope_t *scope, uint n_pos_defaults, uint n_kw_defaults) {
+    if (n_pos_defaults == 0 && n_kw_defaults == 0) {
         emit_bc_pre(emit, 1);
         emit_write_byte_code_byte_uint(emit, MP_BC_MAKE_FUNCTION, scope->unique_code_id);
     } else {
-        emit_bc_pre(emit, 0);
+        if (n_pos_defaults == 0) {
+            // load dummy entry for non-existent positional default tuple
+            emit_bc_load_null(emit);
+        } else if (n_kw_defaults == 0) {
+            // load dummy entry for non-existent keyword default dict
+            emit_bc_load_null(emit);
+            emit_bc_rot_two(emit);
+        }
+        emit_bc_pre(emit, -1);
         emit_write_byte_code_byte_uint(emit, MP_BC_MAKE_FUNCTION_DEFARGS, scope->unique_code_id);
     }
 }
 
-STATIC void emit_bc_make_closure(emit_t *emit, scope_t *scope, int n_dict_params, int n_default_params) {
-    assert(n_dict_params == 0);
-    if (n_default_params == 0) {
+STATIC void emit_bc_make_closure(emit_t *emit, scope_t *scope, uint n_pos_defaults, uint n_kw_defaults) {
+    if (n_pos_defaults == 0 && n_kw_defaults == 0) {
         emit_bc_pre(emit, 0);
         emit_write_byte_code_byte_uint(emit, MP_BC_MAKE_CLOSURE, scope->unique_code_id);
     } else {
-        emit_bc_pre(emit, -1);
+        if (n_pos_defaults == 0) {
+            // load dummy entry for non-existent positional default tuple
+            emit_bc_load_null(emit);
+            emit_bc_rot_two(emit);
+        } else if (n_kw_defaults == 0) {
+            // load dummy entry for non-existent keyword default dict
+            emit_bc_load_null(emit);
+            emit_bc_rot_three(emit);
+        }
+        emit_bc_pre(emit, -2);
         emit_write_byte_code_byte_uint(emit, MP_BC_MAKE_CLOSURE_DEFARGS, scope->unique_code_id);
     }
 }
 
-STATIC void emit_bc_call_function(emit_t *emit, int n_positional, int n_keyword, bool have_star_arg, bool have_dbl_star_arg) {
-    int s = 0;
-    if (have_star_arg) {
-        s += 1;
-    }
-    if (have_dbl_star_arg) {
-        s += 1;
-    }
-    emit_bc_pre(emit, -n_positional - 2 * n_keyword - s);
-    int op;
-    if (have_star_arg) {
-        if (have_dbl_star_arg) {
-            op = MP_BC_CALL_FUNCTION_VAR_KW;
-        } else {
-            op = MP_BC_CALL_FUNCTION_VAR;
+STATIC void emit_bc_call_function_method_helper(emit_t *emit, int stack_adj, uint bytecode_base, int n_positional, int n_keyword, bool have_star_arg, bool have_dbl_star_arg) {
+    if (have_star_arg || have_dbl_star_arg) {
+        if (!have_star_arg) {
+            // load dummy entry for non-existent pos_seq
+            emit_bc_load_null(emit);
+            emit_bc_rot_two(emit);
+        } else if (!have_dbl_star_arg) {
+            // load dummy entry for non-existent kw_dict
+            emit_bc_load_null(emit);
         }
+        emit_bc_pre(emit, stack_adj - n_positional - 2 * n_keyword - 2);
+        emit_write_byte_code_byte_uint(emit, bytecode_base + 1, (n_keyword << 8) | n_positional); // TODO make it 2 separate uints?
     } else {
-        if (have_dbl_star_arg) {
-            op = MP_BC_CALL_FUNCTION_KW;
-        } else {
-            op = MP_BC_CALL_FUNCTION;
-        }
+        emit_bc_pre(emit, stack_adj - n_positional - 2 * n_keyword);
+        emit_write_byte_code_byte_uint(emit, bytecode_base, (n_keyword << 8) | n_positional); // TODO make it 2 separate uints?
     }
-    emit_write_byte_code_byte_uint(emit, op, (n_keyword << 8) | n_positional); // TODO make it 2 separate uints
+}
+
+STATIC void emit_bc_call_function(emit_t *emit, int n_positional, int n_keyword, bool have_star_arg, bool have_dbl_star_arg) {
+    emit_bc_call_function_method_helper(emit, 0, MP_BC_CALL_FUNCTION, n_positional, n_keyword, have_star_arg, have_dbl_star_arg);
 }
 
 STATIC void emit_bc_call_method(emit_t *emit, int n_positional, int n_keyword, bool have_star_arg, bool have_dbl_star_arg) {
-    int s = 0;
-    if (have_star_arg) {
-        s += 1;
-    }
-    if (have_dbl_star_arg) {
-        s += 1;
-    }
-    emit_bc_pre(emit, -1 - n_positional - 2 * n_keyword - s);
-    int op;
-    if (have_star_arg) {
-        if (have_dbl_star_arg) {
-            op = MP_BC_CALL_METHOD_VAR_KW;
-        } else {
-            op = MP_BC_CALL_METHOD_VAR;
-        }
-    } else {
-        if (have_dbl_star_arg) {
-            op = MP_BC_CALL_METHOD_KW;
-        } else {
-            op = MP_BC_CALL_METHOD;
-        }
-    }
-    emit_write_byte_code_byte_uint(emit, op, (n_keyword << 8) | n_positional); // TODO make it 2 separate uints
+    emit_bc_call_function_method_helper(emit, -1, MP_BC_CALL_METHOD, n_positional, n_keyword, have_star_arg, have_dbl_star_arg);
 }
 
 STATIC void emit_bc_return_value(emit_t *emit) {
@@ -866,7 +854,6 @@ const emit_method_table_t emit_bc_method_table = {
     emit_bc_store_global,
     emit_bc_store_attr,
     emit_bc_store_subscr,
-    emit_bc_store_locals,
     emit_bc_delete_fast,
     emit_bc_delete_deref,
     emit_bc_delete_name,

@@ -30,7 +30,16 @@ void mp_byte_code_print(const byte *ip, int len) {
     machine_uint_t code_info_size = ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24);
     ip += code_info_size;
 
-    // decode prelude
+    // bytecode prelude: state size and exception stack size; 16 bit uints
+    {
+        uint n_state = ip[0] | (ip[1] << 8);
+        uint n_exc_stack = ip[2] | (ip[3] << 8);
+        ip += 4;
+        printf("(N_STATE %u)\n", n_state);
+        printf("(N_EXC_STACK %u)\n", n_exc_stack);
+    }
+
+    // bytecode prelude: initialise closed over variables
     {
         uint n_local = *ip++;
         printf("(NUM_LOCAL %u)\n", n_local);
@@ -390,9 +399,19 @@ void mp_byte_code_print(const byte *ip, int len) {
                 printf("CALL_FUNCTION n=" UINT_FMT " nkw=" UINT_FMT, unum & 0xff, (unum >> 8) & 0xff);
                 break;
 
+            case MP_BC_CALL_FUNCTION_VAR_KW:
+                DECODE_UINT;
+                printf("CALL_FUNCTION_VAR_KW n=" UINT_FMT " nkw=" UINT_FMT, unum & 0xff, (unum >> 8) & 0xff);
+                break;
+
             case MP_BC_CALL_METHOD:
                 DECODE_UINT;
                 printf("CALL_METHOD n=" UINT_FMT " nkw=" UINT_FMT, unum & 0xff, (unum >> 8) & 0xff);
+                break;
+
+            case MP_BC_CALL_METHOD_VAR_KW:
+                DECODE_UINT;
+                printf("CALL_METHOD_VAR_KW n=" UINT_FMT " nkw=" UINT_FMT, unum & 0xff, (unum >> 8) & 0xff);
                 break;
 
             case MP_BC_RETURN_VALUE:

@@ -25,30 +25,33 @@ STATIC const mp_builtin_elem_t builtin_object_table[] = {
     { MP_QSTR___repl_print__, (mp_obj_t)&mp_builtin___repl_print___obj },
 
     // built-in types
-    { MP_QSTR_bool, (mp_obj_t)&bool_type },
-    { MP_QSTR_bytes, (mp_obj_t)&bytes_type },
+    { MP_QSTR_bool, (mp_obj_t)&mp_type_bool },
+    { MP_QSTR_bytes, (mp_obj_t)&mp_type_bytes },
 #if MICROPY_ENABLE_FLOAT
     { MP_QSTR_complex, (mp_obj_t)&mp_type_complex },
 #endif
-    { MP_QSTR_dict, (mp_obj_t)&dict_type },
-    { MP_QSTR_enumerate, (mp_obj_t)&enumerate_type },
-    { MP_QSTR_filter, (mp_obj_t)&filter_type },
+    { MP_QSTR_dict, (mp_obj_t)&mp_type_dict },
+    { MP_QSTR_enumerate, (mp_obj_t)&mp_type_enumerate },
+    { MP_QSTR_filter, (mp_obj_t)&mp_type_filter },
 #if MICROPY_ENABLE_FLOAT
     { MP_QSTR_float, (mp_obj_t)&mp_type_float },
 #endif
-    { MP_QSTR_int, (mp_obj_t)&int_type },
-    { MP_QSTR_list, (mp_obj_t)&list_type },
-    { MP_QSTR_map, (mp_obj_t)&map_type },
+    { MP_QSTR_int, (mp_obj_t)&mp_type_int },
+    { MP_QSTR_list, (mp_obj_t)&mp_type_list },
+    { MP_QSTR_map, (mp_obj_t)&mp_type_map },
     { MP_QSTR_object, (mp_obj_t)&mp_type_object },
-    { MP_QSTR_set, (mp_obj_t)&set_type },
-    { MP_QSTR_str, (mp_obj_t)&str_type },
-    { MP_QSTR_super, (mp_obj_t)&super_type },
-    { MP_QSTR_tuple, (mp_obj_t)&tuple_type },
+    { MP_QSTR_set, (mp_obj_t)&mp_type_set },
+    { MP_QSTR_str, (mp_obj_t)&mp_type_str },
+    { MP_QSTR_super, (mp_obj_t)&mp_type_super },
+    { MP_QSTR_tuple, (mp_obj_t)&mp_type_tuple },
     { MP_QSTR_type, (mp_obj_t)&mp_type_type },
-    { MP_QSTR_zip, (mp_obj_t)&zip_type },
+    { MP_QSTR_zip, (mp_obj_t)&mp_type_zip },
 
     { MP_QSTR_classmethod, (mp_obj_t)&mp_type_classmethod },
     { MP_QSTR_staticmethod, (mp_obj_t)&mp_type_staticmethod },
+
+    // built-in objects
+    { MP_QSTR_Ellipsis, (mp_obj_t)&mp_const_ellipsis_obj },
 
     // built-in user functions
     { MP_QSTR_abs, (mp_obj_t)&mp_builtin_abs_obj },
@@ -118,6 +121,9 @@ STATIC const mp_builtin_elem_t builtin_module_table[] = {
     { MP_QSTR_micropython, (mp_obj_t)&mp_module_micropython },
 
     { MP_QSTR_array, (mp_obj_t)&mp_module_array },
+#if MICROPY_ENABLE_MOD_IO
+    { MP_QSTR_io, (mp_obj_t)&mp_module_io },
+#endif
     { MP_QSTR_collections, (mp_obj_t)&mp_module_collections },
 
 #if MICROPY_ENABLE_FLOAT

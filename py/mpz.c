@@ -993,8 +993,11 @@ void mpz_pow_inpl(mpz_t *dest, const mpz_t *lhs, const mpz_t *rhs) {
         if (mpz_is_odd(n)) {
             mpz_mul_inpl(dest, dest, x);
         }
-        mpz_mul_inpl(x, x, x);
         n->len = mpn_shr(n->dig, n->dig, n->len, 1);
+        if (n->len == 0) {
+            break;
+        }
+        mpz_mul_inpl(x, x, x);
     }
 
     mpz_free(x);
@@ -1139,6 +1142,7 @@ mpz_t *mpz_mod(const mpz_t *lhs, const mpz_t *rhs) {
 }
 #endif
 
+// TODO check that this correctly handles overflow in all cases
 machine_int_t mpz_as_int(const mpz_t *i) {
     machine_int_t val = 0;
     mpz_dig_t *d = i->dig + i->len;
@@ -1147,11 +1151,13 @@ machine_int_t mpz_as_int(const mpz_t *i) {
         machine_int_t oldval = val;
         val = (val << DIG_SIZE) | *d;
         if (val < oldval) {
-            // TODO need better handling of conversion overflow
+            // overflow, return +/- "infinity"
             if (i->neg == 0) {
-                return 0x7fffffff;
+                // +infinity
+                return ~WORD_MSBIT_HIGH;
             } else {
-                return 0x80000000;
+                // -infinity
+                return WORD_MSBIT_HIGH;
             }
         }
     }
@@ -1161,6 +1167,28 @@ machine_int_t mpz_as_int(const mpz_t *i) {
     }
 
     return val;
+}
+
+// TODO check that this correctly handles overflow in all cases
+bool mpz_as_int_checked(const mpz_t *i, machine_int_t *value) {
+    machine_int_t val = 0;
+    mpz_dig_t *d = i->dig + i->len;
+
+    while (--d >= i->dig) {
+        machine_int_t oldval = val;
+        val = (val << DIG_SIZE) | *d;
+        if (val < oldval) {
+            // overflow
+            return false;
+        }
+    }
+
+    if (i->neg != 0) {
+        val = -val;
+    }
+
+    *value = val;
+    return true;
 }
 
 #if MICROPY_ENABLE_FLOAT

@@ -1,8 +1,8 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "mpconfig.h"
+#include "misc.h"
 #include "gc.h"
 
 #if MICROPY_ENABLE_GC

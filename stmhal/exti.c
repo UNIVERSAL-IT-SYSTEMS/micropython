@@ -8,7 +8,6 @@
 #include "mpconfig.h"
 #include "qstr.h"
 #include "obj.h"
-#include "map.h"
 #include "runtime.h"
 #include "nlr.h"
 
@@ -66,6 +65,8 @@
 // There is also a C API, so that drivers which require EXTI interrupt lines
 // can also use this code. See exti.h for the available functions and
 // usrsw.h for an example of using this.
+//
+// TODO Add python method to change callback object.
 
 #define EXTI_OFFSET	(EXTI_BASE - PERIPH_BASE)
 
@@ -262,7 +263,7 @@ STATIC MP_DEFINE_CONST_DICT(exti_locals_dict, exti_locals_dict_table);
 STATIC mp_obj_t exti_make_new(mp_obj_t type_in, uint n_args, uint n_kw, const mp_obj_t *args) {
     // type_in == exti_obj_type
 
-    rt_check_nargs(n_args, 4, 4, n_kw, false);
+    mp_check_nargs(n_args, 4, 4, n_kw, false);
 
     exti_obj_t *self = m_new_obj(exti_obj_t);
     self->base.type = type_in;
@@ -302,7 +303,8 @@ void Handle_EXTI_Irq(uint32_t line) {
         if (line < EXTI_NUM_VECTORS) {
             exti_vector_t *v = &exti_vector[line];
             if (v->callback_obj != mp_const_none) {
-                rt_call_function_1(v->callback_obj, MP_OBJ_NEW_SMALL_INT(line));
+                // TODO need to wrap this in an nlr_buf; really need a general function for this
+                mp_call_function_1(v->callback_obj, MP_OBJ_NEW_SMALL_INT(line));
             }
         }
     }

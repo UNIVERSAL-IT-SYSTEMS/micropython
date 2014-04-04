@@ -7,10 +7,10 @@
 #include "mpconfig.h"
 #include "qstr.h"
 #include "obj.h"
-#include "map.h"
 #include "gc.h"
 #include "gccollect.h"
 #include "systick.h"
+#include "pybstdio.h"
 #include "pyexec.h"
 #include "led.h"
 #include "gpio.h"
@@ -27,9 +27,7 @@
 #include "servo.h"
 #include "dac.h"
 #include "i2c.h"
-#if 0
 #include "usb.h"
-#endif
 #include "modpyb.h"
 #include "ff.h"
 
@@ -184,15 +182,14 @@ STATIC mp_obj_t pyb_standby(void) {
 MP_DEFINE_CONST_FUN_OBJ_0(pyb_standby_obj, pyb_standby);
 
 STATIC mp_obj_t pyb_hid_send_report(mp_obj_t arg) {
-#if 0
-    mp_obj_t *items = mp_obj_get_array_fixed_n(arg, 4);
+    mp_obj_t *items;
+    mp_obj_get_array_fixed_n(arg, 4, &items);
     uint8_t data[4];
     data[0] = mp_obj_get_int(items[0]);
     data[1] = mp_obj_get_int(items[1]);
     data[2] = mp_obj_get_int(items[2]);
     data[3] = mp_obj_get_int(items[3]);
     usb_hid_send_report(data);
-#endif
     return mp_const_none;
 }
 
@@ -202,8 +199,6 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_1(pyb_hid_send_report_obj, pyb_hid_send_report);
 MP_DEFINE_CONST_FUN_OBJ_2(pyb_I2C_obj, pyb_I2C); // TODO put this in i2c.c
 #endif
 
-extern int stdin_rx_chr(void);
-
 STATIC mp_obj_t pyb_input(void ) {
     return mp_obj_new_int(stdin_rx_chr());
 }
@@ -212,6 +207,7 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_0(pyb_input_obj, pyb_input);
 
 MP_DECLARE_CONST_FUN_OBJ(pyb_source_dir_obj); // defined in main.c
 MP_DECLARE_CONST_FUN_OBJ(pyb_main_obj); // defined in main.c
+MP_DECLARE_CONST_FUN_OBJ(pyb_usb_mode_obj); // defined in main.c
 
 STATIC const mp_map_elem_t pyb_module_globals_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR___name__), MP_OBJ_NEW_QSTR(MP_QSTR_pyb) },
@@ -224,6 +220,7 @@ STATIC const mp_map_elem_t pyb_module_globals_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR_standby), (mp_obj_t)&pyb_standby_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_source_dir), (mp_obj_t)&pyb_source_dir_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_main), (mp_obj_t)&pyb_main_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_usb_mode), (mp_obj_t)&pyb_usb_mode_obj },
 
     { MP_OBJ_NEW_QSTR(MP_QSTR_millis), (mp_obj_t)&pyb_millis_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_delay), (mp_obj_t)&pyb_delay_obj },
@@ -268,9 +265,7 @@ STATIC const mp_map_elem_t pyb_module_globals_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR_Accel), (mp_obj_t)&pyb_accel_type },
 #endif
 
-#if 0
     { MP_OBJ_NEW_QSTR(MP_QSTR_hid), (mp_obj_t)&pyb_hid_send_report_obj },
-#endif
 
     // input
     { MP_OBJ_NEW_QSTR(MP_QSTR_input), (mp_obj_t)&pyb_input_obj },

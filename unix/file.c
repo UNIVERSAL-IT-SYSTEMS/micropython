@@ -9,7 +9,6 @@
 #include "mpconfig.h"
 #include "qstr.h"
 #include "obj.h"
-#include "map.h"
 #include "runtime.h"
 #include "stream.h"
 
@@ -49,6 +48,11 @@ static mp_obj_t fdfile_close(mp_obj_t self_in) {
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(fdfile_close_obj, fdfile_close);
+
+mp_obj_t fdfile___exit__(uint n_args, const mp_obj_t *args) {
+    return fdfile_close(args[0]);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(fdfile___exit___obj, 4, 4, fdfile___exit__);
 
 static mp_obj_t fdfile_fileno(mp_obj_t self_in) {
     mp_obj_fdfile_t *self = self_in;
@@ -113,6 +117,8 @@ STATIC const mp_map_elem_t rawfile_locals_dict_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR_readline), (mp_obj_t)&mp_stream_unbuffered_readline_obj},
     { MP_OBJ_NEW_QSTR(MP_QSTR_write), (mp_obj_t)&mp_stream_write_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_close), (mp_obj_t)&fdfile_close_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR___enter__), (mp_obj_t)&mp_identity_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR___exit__), (mp_obj_t)&fdfile___exit___obj },
 };
 
 STATIC MP_DEFINE_CONST_DICT(rawfile_locals_dict, rawfile_locals_dict_table);
@@ -140,7 +146,7 @@ MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mp_builtin_open_obj, 1, 2, mp_builtin_open);
 
 void file_init() {
     mp_obj_t m_sys = mp_obj_new_module(MP_QSTR_sys);
-    rt_store_attr(m_sys, MP_QSTR_stdin, fdfile_new(STDIN_FILENO));
-    rt_store_attr(m_sys, MP_QSTR_stdout, fdfile_new(STDOUT_FILENO));
-    rt_store_attr(m_sys, MP_QSTR_stderr, fdfile_new(STDERR_FILENO));
+    mp_store_attr(m_sys, MP_QSTR_stdin, fdfile_new(STDIN_FILENO));
+    mp_store_attr(m_sys, MP_QSTR_stdout, fdfile_new(STDOUT_FILENO));
+    mp_store_attr(m_sys, MP_QSTR_stderr, fdfile_new(STDERR_FILENO));
 }

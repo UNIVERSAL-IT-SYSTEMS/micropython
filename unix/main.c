@@ -6,6 +6,7 @@
 #include <stdarg.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <errno.h>
 
 #include "nlr.h"
 #include "misc.h"
@@ -15,7 +16,6 @@
 #include "lexerunix.h"
 #include "parse.h"
 #include "obj.h"
-#include "map.h"
 #include "parsehelper.h"
 #include "compile.h"
 #include "runtime0.h"
@@ -85,7 +85,7 @@ static void execute_from_lexer(mp_lexer_t *lex, mp_parse_input_kind_t input_kind
     // execute it
     nlr_buf_t nlr;
     if (nlr_push(&nlr) == 0) {
-        rt_call_function_0(module_fun);
+        mp_call_function_0(module_fun);
         nlr_pop();
     } else {
         // uncaught exception
@@ -213,13 +213,24 @@ mp_obj_t test_obj_new(int value) {
     return o;
 }
 
-int usage(void) {
+int usage(char **argv) {
     printf(
-"usage: py [-X <opt>] [-c <command>] [<filename>]\n"
+"usage: %s [-X <opt>] [-c <command>] [<filename>]\n"
 "\n"
-"Implementation specific options:\n"
+"Implementation specific options:\n", argv[0]
+);
+    int impl_opts_cnt = 0;
+#if MICROPY_ENABLE_GC
+    printf(
 "  heapsize=<n> -- set the heap size for the GC\n"
 );
+    impl_opts_cnt++;
+#endif
+
+    if (impl_opts_cnt == 0) {
+        printf("  (none)\n");
+    }
+
     return 1;
 }
 
@@ -250,7 +261,7 @@ void pre_process_options(int argc, char **argv) {
         if (argv[a][0] == '-') {
             if (strcmp(argv[a], "-X") == 0) {
                 if (a + 1 >= argc) {
-                    exit(usage());
+                    exit(usage(argv));
                 }
                 if (0) {
 #if MICROPY_ENABLE_GC
@@ -258,7 +269,7 @@ void pre_process_options(int argc, char **argv) {
                     heap_size = strtol(argv[a + 1] + sizeof("heapsize=") - 1, NULL, 0);
 #endif
                 } else {
-                    exit(usage());
+                    exit(usage(argv));
                 }
                 a++;
             }
@@ -278,7 +289,7 @@ int main(int argc, char **argv) {
 #endif
 
     qstr_init();
-    rt_init();
+    mp_init();
 
     char *home = getenv("HOME");
     char *path = getenv("MICROPYPATH");
@@ -292,9 +303,9 @@ int main(int argc, char **argv) {
             p++;
         }
     }
-    sys_path = mp_obj_new_list(path_num, NULL);
+    mp_sys_path = mp_obj_new_list(path_num, NULL);
     mp_obj_t *path_items;
-    mp_obj_list_get(sys_path, &path_num, &path_items);
+    mp_obj_list_get(mp_sys_path, &path_num, &path_items);
     path_items[0] = MP_OBJ_NEW_QSTR(MP_QSTR_);
     char *p = path;
     for (int i = 1; i < path_num; i++) {
@@ -315,15 +326,15 @@ int main(int argc, char **argv) {
     }
 
     mp_obj_t m_sys = mp_obj_new_module(MP_QSTR_sys);
-    rt_store_attr(m_sys, MP_QSTR_path, sys_path);
+    mp_store_attr(m_sys, MP_QSTR_path, mp_sys_path);
     mp_obj_t py_argv = mp_obj_new_list(0, NULL);
-    rt_store_attr(m_sys, MP_QSTR_argv, py_argv);
+    mp_store_attr(m_sys, MP_QSTR_argv, py_argv);
 
-    rt_store_name(qstr_from_str("test"), test_obj_new(42));
-    rt_store_name(qstr_from_str("mem_info"), rt_make_function_n(0, mem_info));
-    rt_store_name(qstr_from_str("qstr_info"), rt_make_function_n(0, qstr_info));
+    mp_store_name(qstr_from_str("test"), test_obj_new(42));
+    mp_store_name(qstr_from_str("mem_info"), mp_make_function_n(0, mem_info));
+    mp_store_name(qstr_from_str("qstr_info"), mp_make_function_n(0, qstr_info));
 #if MICROPY_ENABLE_GC
-    rt_store_name(qstr_from_str("gc"), (mp_obj_t)&pyb_gc_obj);
+    mp_store_name(qstr_from_str("gc"), (mp_obj_t)&pyb_gc_obj);
 #endif
 
     file_init();
@@ -344,8 +355,8 @@ int main(int argc, char **argv) {
     // test_obj.attr = 42
     mp_obj_t test_class_type, test_class_instance;
     test_class_type = mp_obj_new_type(QSTR_FROM_STR_STATIC("TestClass"), mp_const_empty_tuple, mp_obj_new_dict(0));
-    rt_store_name(QSTR_FROM_STR_STATIC("test_obj"), test_class_instance = rt_call_function_0(test_class_type));
-    rt_store_attr(test_class_instance, QSTR_FROM_STR_STATIC("attr"), mp_obj_new_int(42));
+    mp_store_name(QSTR_FROM_STR_STATIC("test_obj"), test_class_instance = mp_call_function_0(test_class_type));
+    mp_store_attr(test_class_instance, QSTR_FROM_STR_STATIC("attr"), mp_obj_new_int(42));
 
     /*
     printf("bytes:\n");
@@ -359,7 +370,7 @@ int main(int argc, char **argv) {
         if (argv[a][0] == '-') {
             if (strcmp(argv[a], "-c") == 0) {
                 if (a + 1 >= argc) {
-                    return usage();
+                    return usage(argv);
                 }
                 do_str(argv[a + 1]);
                 executed = true;
@@ -367,18 +378,24 @@ int main(int argc, char **argv) {
             } else if (strcmp(argv[a], "-X") == 0) {
                 a += 1;
             } else {
-                return usage();
+                return usage(argv);
             }
         } else {
-            // Set base dir of the script as first entry in sys.path
             char *basedir = realpath(argv[a], NULL);
-            if (basedir != NULL) {
-                char *p = strrchr(basedir, '/');
-                path_items[0] = MP_OBJ_NEW_QSTR(qstr_from_strn(basedir, p - basedir));
-                free(basedir);
+            if (basedir == NULL) {
+                fprintf(stderr, "%s: can't open file '%s': [Errno %d] ", argv[0], argv[1], errno);
+                perror("");
+                // CPython exits with 2 in such case
+                exit(2);
             }
+
+            // Set base dir of the script as first entry in sys.path
+            char *p = strrchr(basedir, '/');
+            path_items[0] = MP_OBJ_NEW_QSTR(qstr_from_strn(basedir, p - basedir));
+            free(basedir);
+
             for (int i = a; i < argc; i++) {
-                rt_list_append(py_argv, MP_OBJ_NEW_QSTR(qstr_from_str(argv[i])));
+                mp_obj_list_append(py_argv, MP_OBJ_NEW_QSTR(qstr_from_str(argv[i])));
             }
             do_file(argv[a]);
             executed = true;
@@ -390,7 +407,7 @@ int main(int argc, char **argv) {
         do_repl();
     }
 
-    rt_deinit();
+    mp_deinit();
 
     //printf("total bytes = %d\n", m_get_total_bytes_allocated());
     return 0;

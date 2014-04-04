@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <stdint.h>
 #include <assert.h>
 
@@ -9,6 +10,12 @@
 #include "parsenum.h"
 #include "mpz.h"
 #include "objint.h"
+#include "runtime0.h"
+#include "runtime.h"
+
+#if MICROPY_ENABLE_FLOAT
+#include <math.h>
+#endif
 
 // This dispatcher function is expected to be independent of the implementation
 // of long int
@@ -25,6 +32,10 @@ STATIC mp_obj_t int_make_new(mp_obj_t type_in, uint n_args, uint n_kw, const mp_
                 uint l;
                 const char *s = mp_obj_str_get_data(args[0], &l);
                 return mp_parse_num_integer(s, l, 0);
+#if MICROPY_ENABLE_FLOAT
+            } else if (MP_OBJ_IS_TYPE(args[0], &mp_type_float)) {
+                return MP_OBJ_NEW_SMALL_INT((machine_int_t)(MICROPY_FLOAT_C_FUN(trunc)(mp_obj_float_get(args[0]))));
+#endif
             } else {
                 return MP_OBJ_NEW_SMALL_INT(mp_obj_get_int(args[0]));
             }
@@ -51,16 +62,20 @@ void int_print(void (*print)(void *env, const char *fmt, ...), void *env, mp_obj
     }
 }
 
-// This is called only for non-SMALL_INT
+// This is called for operations on SMALL_INT that are not handled by mp_unary_op
 mp_obj_t int_unary_op(int op, mp_obj_t o_in) {
-    assert(0);
-    return mp_const_none;
+    return MP_OBJ_NULL;
 }
 
-// This is called only for non-SMALL_INT
+// This is called for operations on SMALL_INT that are not handled by mp_binary_op
 mp_obj_t int_binary_op(int op, mp_obj_t lhs_in, mp_obj_t rhs_in) {
-    assert(0);
-    return mp_const_none;
+    if (op == MP_BINARY_OP_MULTIPLY) {
+        if (MP_OBJ_IS_STR(rhs_in) || MP_OBJ_IS_TYPE(rhs_in, &mp_type_tuple) || MP_OBJ_IS_TYPE(rhs_in, &mp_type_list)) {
+            // multiply is commutative for these types, so delegate to them
+            return mp_binary_op(op, rhs_in, lhs_in);
+        }
+    }
+    return MP_OBJ_NULL;
 }
 
 // This is called only with strings whose value doesn't fit in SMALL_INT
@@ -109,7 +124,7 @@ mp_float_t mp_obj_int_as_float(mp_obj_t self_in) {
 
 #endif // MICROPY_LONGINT_IMPL == MICROPY_LONGINT_IMPL_NONE
 
-const mp_obj_type_t int_type = {
+const mp_obj_type_t mp_type_int = {
     { &mp_type_type },
     .name = MP_QSTR_int,
     .print = int_print,

@@ -21,7 +21,7 @@ INC += -I$(PY_SRC)
 INC += -I$(CMSIS_DIR)/inc
 INC += -I$(CMSIS_DIR)/devinc
 INC += -I$(HAL_DIR)/inc
-INC += -I$(USBDEV_DIR)/core/inc -I$(USBDEV_DIR)/class/cdc_msc/inc
+INC += -I$(USBDEV_DIR)/core/inc -I$(USBDEV_DIR)/class/cdc_msc_hid/inc
 #INC += -I$(USBHOST_DIR)
 INC += -I$(FATFS_DIR)/src
 #INC += -I$(CC3K_DIR)
@@ -29,7 +29,7 @@ INC += -I$(FATFS_DIR)/src
 CFLAGS_CORTEX_M4 = -mthumb -mtune=cortex-m4 -mabi=aapcs-linux -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -fsingle-precision-constant -Wdouble-promotion
 CFLAGS = $(INC) -Wall -Werror -ansi -std=gnu99 $(CFLAGS_CORTEX_M4) $(COPT)
 
-BOARD ?= PYBv10
+BOARD ?= PYBV10
 ifeq ($(wildcard boards/$(BOARD)/.),)
 $(error Invalid BOARD specified)
 endif
@@ -61,6 +61,7 @@ SRC_C = \
 	usbd_msc_storage.c \
 	pendsv.c \
 	systick.c  \
+	timer.c \
 	led.c \
 	pin.c \
 	pin_map.c \
@@ -71,6 +72,8 @@ SRC_C = \
 	math.c \
 	malloc0.c \
 	gccollect.c \
+	pybstdio.c \
+	readline.c \
 	pyexec.c \
 	help.c \
 	input.c \
@@ -96,7 +99,6 @@ SRC_C = \
 	adc.c \
 	i2c.c \
 
-#	timer.c \
 #	pybwlan.c \
 
 SRC_S = \
@@ -133,10 +135,10 @@ SRC_USBDEV = $(addprefix $(USBDEV_DIR)/,\
 	core/src/usbd_core.c \
 	core/src/usbd_ctlreq.c \
 	core/src/usbd_ioreq.c \
-	class/cdc_msc/src/usbd_cdc_msc.c \
-	class/cdc_msc/src/usbd_msc_bot.c \
-	class/cdc_msc/src/usbd_msc_scsi.c \
-	class/cdc_msc/src/usbd_msc_data.c \
+	class/cdc_msc_hid/src/usbd_cdc_msc_hid.c \
+	class/cdc_msc_hid/src/usbd_msc_bot.c \
+	class/cdc_msc_hid/src/usbd_msc_scsi.c \
+	class/cdc_msc_hid/src/usbd_msc_data.c \
 	)
 
 #	class/cdc/src/usbd_cdc.c \

@@ -287,7 +287,7 @@ void HAL_Delay(__IO uint32_t Delay)
   // even when Delay causes wraparound.
 
   while (HAL_GetTick() - start <= Delay) {
-    __WFI();  // enter sleep mode, waiting for interrupt
+   // __WFI();  // enter sleep mode, waiting for interrupt
   }
 }
 

@@ -91,6 +91,8 @@ STATIC void mp_map_rehash(mp_map_t *map) {
 }
 
 mp_map_elem_t* mp_map_lookup(mp_map_t *map, mp_obj_t index, mp_map_lookup_kind_t lookup_kind) {
+    if (!map)
+        return map;
     // if the map is a fixed array then we must do a brute force linear search
     if (map->table_is_fixed_array) {
         if (lookup_kind != MP_MAP_LOOKUP) {

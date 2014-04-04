@@ -39,7 +39,7 @@ BOARD ?= STM32F4DISC
 ifeq ($(wildcard boards/$(BOARD)/.),)
 $(error Invalid BOARD specified)
 endif
-CFLAGS += -Iboards/$(BOARD)
+CFLAGS += -Iboards/$(BOARD) -DFREERTOS
 
 #Debugging/Optimization
 DEBUG?=1

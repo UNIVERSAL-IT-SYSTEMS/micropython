@@ -87,7 +87,11 @@ void NMI_Handler(void)
   * @param  None
   * @retval None
   */
+#ifdef FREERTOS
 void micropy_HardFault_Handler(void)
+#else
+void HardFault_Handler(void)
+#endif
 {
   /* Go to infinite loop when Hard Fault exception occurs */
   while (1)
@@ -143,7 +147,11 @@ void UsageFault_Handler(void)
   * @param  None
   * @retval None
   */
+#ifdef FREERTOS
 void micropy_SVC_Handler(void)
+#else
+void SVC_Handler(void)
+#endif
 {
 }
 
@@ -161,7 +169,11 @@ void DebugMon_Handler(void)
   * @param  None
   * @retval None
   */
+#ifdef FREERTOS
 void micropy_PendSV_Handler(void)
+#else
+void PendSV_Handler(void)
+#endif
 {
     extern void pendsv_isr_handler(void);
     pendsv_isr_handler();
@@ -172,7 +184,11 @@ void micropy_PendSV_Handler(void)
   * @param  None
   * @retval None
   */
+#ifdef FREERTOS
 void micropy_SysTick_Handler(void)
+#else
+void SysTick_Handler(void)
+#endif
 {
     HAL_IncTick();
 }
